@@ -3,7 +3,64 @@ from numpy.random import randint
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
 import scienceplots as scp
+import torch
 
+
+def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mode='change', labels=None, clrs=None, sem=True, normalize=True):
+    
+    if labels is None:
+        labels = ["Familiar", "Novel"]
+    if clrs is None:
+        clrs = ["darkorange", "darkblue"]
+    
+    familiar_mean = familiar_responses.mean([0, -1]).detach()
+    novel_mean = novel_responses.mean([0, -1]).detach()
+    
+    # define the event onset
+    half_blank = args.blank_ts // 2
+    event_onset = args.blank_ts // 2 + args.img_ts + args.blank_ts
+    
+    # normalize averages
+    if normalize:
+        min_all = torch.min(torch.cat([familiar_mean[:event_onset], novel_mean[:event_onset]]))
+        max_all = torch.max(torch.cat([familiar_mean[:event_onset], novel_mean[:event_onset]]))
+        familiar_mean = (familiar_mean - min_all) / (max_all - min_all)
+        novel_mean = (novel_mean - min_all) / (max_all - min_all)
+    
+    # calculate std     
+    familiar_std = familiar_responses.mean(-1).std(0).detach() / np.sqrt(familiar_responses.shape[0])
+    novel_std = novel_responses.mean(-1).std(0).detach() / np.sqrt(novel_responses.shape[0])
+    
+    # plot image presentations
+    if trial_mode == 'change':
+        ax.axvspan(half_blank, half_blank + args.img_ts, color="r", alpha=0.05)
+        ax.axvspan(half_blank + args.blank_ts + args.img_ts, half_blank + args.blank_ts + 2 * args.img_ts, color="b", alpha=0.05)
+    
+    elif trial_mode == 'omission':
+        # first image
+        ax.axvspan(half_blank, half_blank + args.img_ts, color='magenta', alpha=0.05)
+
+        # omitted image
+        ax.axvline(args.blank_ts + half_blank + args.img_ts, linestyle="--", color='magenta', linewidth=2.5)
+        ax.axvline(args.blank_ts + half_blank + 2 * args.img_ts, linestyle="--", color='magenta', linewidth=2.5)
+
+        # last image
+        ax.axvspan(2 * args.blank_ts + half_blank + 2 * args.img_ts,
+                   2 * args.blank_ts + half_blank + 3 * args.img_ts, color='magenta', alpha=0.05)
+    else:
+        raise
+        
+    ax.plot(familiar_mean.numpy(), label=labels[0], color=clrs[0], linewidth=3.0)
+    ax.plot(novel_mean.numpy(), label=labels[1], color=clrs[1], linewidth=3.0)
+    if sem:
+        ax.fill_between(np.arange(familiar_responses.shape[1]),
+                        familiar_mean - familiar_std,
+                        familiar_mean + familiar_std,
+                        color=clrs[0], alpha=0.25)
+        ax.fill_between(np.arange(novel_responses.shape[1]),
+                        novel_mean - novel_std,
+                        novel_mean + novel_std,
+                        color=clrs[1], alpha=0.25)
 
 def plot_change_responses(args, ax, responses, label, clr, sem=True):
     response_mean = responses.mean([0, -1]).detach()
@@ -20,8 +77,7 @@ def plot_change_responses(args, ax, responses, label, clr, sem=True):
                         response_mean - response_std,
                         response_mean + response_std,
                         color=clr, alpha=0.25)
-        #ax.errorbar(np.arange(responses.shape[1]), response_mean, response_std, ecolor=clr)
-
+        
 def plot_omission_responses(args, ax, responses, label, image_clr, trace_clr, sem=True):
     response_mean = responses.mean([0, -1]).detach()
     response_std = responses.mean(-1).std(0).detach() / np.sqrt(responses.shape[0])
@@ -117,9 +173,7 @@ def plot_sequence_response(responses, timestamps, seq_idx=0, pop_avg=False, perc
     
     else:
         z, vip, sst_theta, sst_mup = z.mean(-1), vip.mean(-1), sst_theta.mean(-1), sst_mup.mean(-1)
-
-    seq_idx = 7
-
+        
     _ = plt.figure(figsize=(15, 10))
 
     with plt.style.context(['nature', 'notebook']):
@@ -129,15 +183,15 @@ def plot_sequence_response(responses, timestamps, seq_idx=0, pop_avg=False, perc
         ax3 = plt.subplot(3, 1, 3, sharex=ax1)
 
         for bf_on, bf_off in zip(*timestamps[seq_idx]['before']):
-            ax1.axvspan(bf_on, bf_off-1, color="r", alpha=0.09)
-            ax2.axvspan(bf_on, bf_off-1, color="r", alpha=0.09)
-            ax3.axvspan(bf_on, bf_off-1, color="r", alpha=0.09)
+            ax1.axvspan(bf_on, bf_off, color="r", alpha=0.09)
+            ax2.axvspan(bf_on, bf_off, color="r", alpha=0.09)
+            ax3.axvspan(bf_on, bf_off, color="r", alpha=0.09)
             
 
         for af_on, af_off in zip(*timestamps[seq_idx]['after']):
-            ax1.axvspan(af_on, af_off-1, color="b", alpha=0.09)
-            ax2.axvspan(af_on, af_off-1, color="b", alpha=0.09)
-            ax3.axvspan(af_on, af_off-1, color="b", alpha=0.09)
+            ax1.axvspan(af_on, af_off, color="b", alpha=0.09)
+            ax2.axvspan(af_on, af_off, color="b", alpha=0.09)
+            ax3.axvspan(af_on, af_off, color="b", alpha=0.09)
 
         ax1.plot(z.cpu().detach().numpy(), c='firebrick', label="Excitatory", linewidth=3.5)
         ax2.plot(vip.cpu().detach().numpy(), c='darkgreen', label="VIP", linewidth=3.5)

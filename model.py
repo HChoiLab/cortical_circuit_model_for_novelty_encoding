@@ -1,20 +1,37 @@
 import torch
 from torch import nn
+from torch.nn.utils.parametrizations import weight_norm
+import math
 
+EPS = 1e-10
 
 # Parametrization classes to constrain weights
 class Positive(nn.Module):
     def forward(self, X):
         return torch.relu(X)
 
+class Negative(nn.Module):
+    def forward(self, X):
+        return -torch.relu(-X)
+    
+class StableRecurrent(nn.Module):
+    MAX_NORM = 0.7
+    def forward(self, X):
+        norm = X.norm()
+        if norm > self.MAX_NORM:
+            return X * (self.MAX_NORM / norm)
+        return X
+    
+        
 class EnergyConstrainedPredictiveCodingModel(nn.Module):
     
     def __init__(self, input_dim, latent_dim, higher_state_dim,
-                lambda_spatial=10.,
+                lambda_spatial=1.0,
                 lambda_temporal=1.0,
                 lambda_energy=1.0,
                 lambda_reward=1.0,
-                perception_only=True):
+                perception_only=True, 
+                bbtt_chunk=None):           # TODO
         
         super().__init__()
         
@@ -22,6 +39,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         self.latent_dim = latent_dim
         self.higher_state_dim = higher_state_dim
         self.perception_only = perception_only
+        self.bbtt_chunk = bbtt_chunk
         
         self.lambda_spatial = lambda_spatial            # regularizing scalar for the spatial error loss
         self.lambda_temporal = lambda_temporal          # regularizing scalar for the temporal error loss
@@ -34,38 +52,67 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         
         # connections to higher area
         self.z_to_h = nn.Linear(latent_dim, higher_state_dim, bias=False)                         # connections from latents to higher area
-        self.h_to_h = nn.Linear(higher_state_dim, higher_state_dim, bias=False)                   # connections from higher area to itself
+        self.h_to_h = nn.Linear(higher_state_dim, higher_state_dim, bias=False)                            # connections from higher area to itself
+        self.h2_to_h2 = nn.Linear(higher_state_dim, higher_state_dim, bias=False)
+        self.z_to_h2 = nn.Linear(latent_dim, higher_state_dim, bias=False)
         
         # connections from higher area
         self.prior_mu = nn.Linear(higher_state_dim, latent_dim, bias=False)                 # encodes the mean of the prior distribution (represented by an SST subpopulation)
-        self.prior_log_var = nn.Linear(higher_state_dim, latent_dim, bias=False)            # encodes the log variance of the prior (represented by VIP neurons)
+        self.prior_log_var = nn.Linear(higher_state_dim, latent_dim, bias=True) # encodes the log variance of the prior (represented by VIP neurons)
         
         # connections involved in the computation of theta
-        self.theta_dim = 16
+        self.theta_dim = latent_dim
         self.h_to_theta = nn.Linear(higher_state_dim, self.theta_dim, bias=False)
-        self.I_to_theta = nn.Linear(input_dim, self.theta_dim, bias=False)
         self.vip_to_theta = nn.Linear(latent_dim, self.theta_dim, bias=False)
         self.theta_to_z = nn.Linear(self.theta_dim, latent_dim, bias=False)
-
+        self.theta_to_theta = nn.Linear(self.theta_dim, self.theta_dim, bias=False)
+        
+        self.I_to_theta = nn.Linear(input_dim, self.theta_dim, bias=False)        # this is the main source of input drive to the sst theta population
+    
+        # connections to reconstruct input from z activity
+        self.reconstruction = nn.Sequential(nn.Linear(latent_dim, 256, bias=False),
+                                            nn.Linear(256, input_dim, bias=False))
+        
+        # decision making and value learning
+        self.value_dim = higher_state_dim
+        self.h_to_value = nn.Linear(higher_state_dim, self.value_dim)
+        self.h2_to_value = nn.Linear(higher_state_dim, self.value_dim)
+        self.z_to_value = nn.Linear(latent_dim, self.value_dim)
+        self.value_to_value = nn.Linear(self.value_dim, self.value_dim)
+        
+        # experimental
+        for param in self.I_to_theta.parameters():
+            param.requires_grad = False
+            
+        self.initialize_params()
+        
         # weight constraints 
         # these weights should be inhibitory; we constrain them to be positive here but then 
         # multiply them by -1 when they're used for computation 
         nn.utils.parametrize.register_parametrization(self.vip_to_theta, 'weight', Positive())
         nn.utils.parametrize.register_parametrization(self.theta_to_z, 'weight', Positive())
-    
-        # connections to reconstruct input from z activity
-        self.reconstruction = nn.Sequential(nn.Linear(latent_dim, 256, bias=False),
-                                            nn.Linear(256, input_dim, bias=False),
-                                            nn.Sigmoid())
+        nn.utils.parametrize.register_parametrization(self.theta_to_theta, 'weight', Positive())
+        nn.utils.parametrize.register_parametrization(self.prior_log_var, 'bias', Positive())
         
-        # decision making and value learning
-        self.h_to_value = nn.Sequential(nn.Linear(higher_state_dim, 256),
-                                        nn.Linear(256, 2))
-
+        nn.utils.parametrize.register_parametrization(self.h_to_h, 'weight', StableRecurrent())
+    
+    def initialize_params(self):
+        def init_weights(m):
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+        
+        self.apply(init_weights)
+        
+        # specific initialization constraints
+        nn.init.normal_(self.I_to_theta.weight, mean=1e-2, std=1e-3)
+        nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
+        nn.init.normal_(self.theta_to_z.weight, mean=.2, std=1e-2)         
+        nn.init.normal_(self.prior_log_var.bias, mean=6., std=0.1)
+        #nn.init.orthogonal_(self.h_to_h.weight)
     
     def compute_reward_loss(self, R, actions, values):
         
-        rewards = R * actions.detach()
+        rewards = R * actions.squeeze().detach()
         
         value_loss = ((rewards - values.squeeze()) ** 2).mean()
         
@@ -80,89 +127,117 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
 
         return action      
     
-    def forward(self, I_t, h_m_1, z_m_1, theta_m_1, epsilon=0.1):      
+    def forward(self, I_t, responses_m_1, epsilon=0.1):      
         
         # get prior from previous higher area state
-        mu_p = nn.functional.relu(self.prior_mu(h_m_1))
+        mu_p = nn.functional.relu(self.prior_mu(responses_m_1['h2']))
 
         # value prediction and value-based modulation of VIP activity
         # value computation
-        if not self.perception_only:
-            values = torch.tanh(self.h_to_value(h_m_1))
-            lick_value = values[:, 1]
-            nolick_value = values[:, 0]
-
-            # probability of licking 
-            lick_prob = torch.softmax(values, -1)[:, 1]
-
-            sigma_p = nn.functional.softplus(self.prior_log_var(h_m_1) + 0.5 * lick_prob.detach().reshape(-1, 1), beta=1.2)
-
-            #rl_gain = torch.exp(lick_value.detach()).reshape(-1, 1)
-            #sigma_p = rl_gain * sigma_p
+        if not self.perception_only:            
+            # calculate sigma p with additional input from the value area
+            sigmap_h = self.prior_log_var(responses_m_1['h'])
+            
+            sigma_p = 0.8 * torch.relu(sigmap_h) + 0.2 * responses_m_1['sigma_p'] # nn.functional.softplus(sigmap_h, beta=5.0)
         
         else:
-            sigma_p = nn.functional.softplus(self.prior_log_var(h_m_1), beta=1.2)
-
+            sigmap_h = self.prior_log_var(responses_m_1['h']) 
+            sigma_p = 0.8 * torch.relu(sigmap_h) + 0.2 * responses_m_1['sigma_p']
+            
         # compute thetas
-        theta_h = 0.5 * theta_m_1 + 0.1 * self.I_to_theta(I_t) - self.vip_to_theta(sigma_p.detach())     # 0.2 -> 0.05 , 0.5 -> 0.3
-        theta = 0.001 * nn.functional.softplus(theta_h, beta=0.5)
+        theta_nonlin = lambda x: torch.relu(x)
+        vip_inh = self.vip_to_theta(sigma_p) #+ 0.4 * self.vip_to_theta(sigmap_m_1)
+        theta_ff = 0.7 * responses_m_1['theta_ff'] + torch.exp(-50 * responses_m_1['theta_ff'].abs()) * self.I_to_theta(I_t)
+        #theta_ff = 0.7 * theta_ff_prev + torch.exp(-1e3 * theta_ff_prev.abs()) * torch.sign(I_t.mean(-1, keepdim=True).abs()) * 0.1
+        theta_ff = torch.tanh(theta_ff)**2
+        #vip_inh = torch.sigmoid(vip_inh - 5.0)
+        theta_h = theta_ff * (1. - torch.sigmoid(vip_inh)) #* (1. - torch.sigmoid(vip_inh)) #/ (1 + torch.exp(vip_inh + 2.0)) #theta_bias + theta_ff - vip_inh
+        theta = 0.3 * responses_m_1['theta'] + theta_h #torch.relu(2. * torch.sigmoid(theta_h) - 1.0) #torch.relu(torch.exp(2. * theta_h)-1) #torch.relu(1 - torch.exp(-torch.exp(theta_h)+1))
         
         # encode input to the posterior parameters
-        mu_q = nn.functional.relu(self.posterior_mu(I_t))
-        sigma_q = torch.relu(self.posterior_log_var(I_t)) 
+        mu_q = torch.relu(self.posterior_mu(I_t))
+        sigma_q = torch.relu(self.posterior_log_var(I_t))
         
         # compute pyramidal activities (inferred z's)
         raw_z = mu_q + torch.randn_like(sigma_q) * sigma_q
-        raw_z = torch.clamp(raw_z, min=0, max=1)
+        raw_z = torch.relu(torch.tanh(raw_z)) # torch.clamp(raw_z, min=0., max=1.)
 
         # inhibitory input from SST to excitatory activity
-        thresholds = 10. * self.theta_to_z(theta)
-        z = nn.functional.relu(raw_z - thresholds)
+        sst_inhibition = 0.8 * responses_m_1['sst_inh'] + self.theta_to_z(theta) #torch.exp(-1e4 * theta_to_z) * (theta_to_z - torch.max(inh_prev, theta_to_z)) + torch.max(inh_prev, theta_to_z) 
+        z = nn.functional.relu(raw_z - sst_inhibition)
+        z_energy = nn.functional.relu(raw_z.detach() - sst_inhibition)
         
         # compute reconstruction (top down prediction from the representation layer)
-        I_hat = self.reconstruction(z)
-        
-        # evolve higher area activities
-        h = nn.functional.relu(self.z_to_h(z_m_1) + self.h_to_h(h_m_1))
+        I_hat = torch.sigmoid(self.reconstruction(z) - 2.0)    # TODO
         
         # compute temporal prediction (top down prediction from the higher layer)
-        z_hat = mu_p + torch.randn_like(mu_p) * sigma_p                      
+        z_hat = mu_p + torch.randn_like(mu_p) * sigma_p
+        
+         # evolve higher area activities
+        h = torch.relu(self.z_to_h(z) + self.h_to_h(responses_m_1['h']))    # TODO ###########################################
+        h2 = torch.relu(self.z_to_h2(z) + self.h2_to_h2(responses_m_1['h2']))
 
         # error population activities
         layer_1_error = (I_t - I_hat) ** 2
-        layer_2_error = (z.detach() - z_hat) ** 2
+        sqrt2p = math.sqrt(2 * 3.14)
+        layer_2_error = (z - z_hat) ** 2 #torch.log(sqrt2p * sigma_p + EPS) + (z.detach() - mu_p)**2/(sigma_p**2 + EPS)
 
         # decision making if we are doing action
         if not self.perception_only:
+            value = self.h_to_value(h) + self.value_to_value(responses_m_1['value']) #+ self.z_to_value(z)
+            lick_value = torch.tanh(value[:, :self.value_dim//2].mean(-1, keepdim=True))
+            nolick_value = torch.tanh(value[:, self.value_dim//2:].mean(-1, keepdim=True))
+
+            # probability of licking 
+            lick_prob = torch.exp(lick_value) / (torch.exp(lick_value) + torch.exp(nolick_value)) #torch.softmax(values, -1)[:, 1]
+            
             # select action with exploration 
             action = self.act_with_exploration(lick_prob, epsilon)
             
             # predicted value of action
             action_value = action * lick_value + (1 - action) * nolick_value
+            
+            rl_gain =  0.2 * responses_m_1['rl_gain'] + 3. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()
+            rl_gain = torch.relu(rl_gain)
+            #rl_gain = torch.relu( -1. * responses_m_1['rl_gain'] + 3. * action_value.detach())
+            
+            # Update VIP activities based on RL gain modulation
+            
+            sigmap_h += rl_gain # sigma_p * rl_gain
+            sigma_p = 0.8 * torch.relu(sigmap_h) + 0.2 * responses_m_1['sigma_p']
 
         # compute losses
         spatial_error_loss = layer_1_error.mean()
         temporal_error_loss = layer_2_error.mean()
-        energy_loss = torch.abs(z).mean()
+        energy_loss = torch.abs(z_energy).mean()
 
         # put together all responses
         responses_t = {
             "mu_p": mu_p,
+            "sigmap_h": sigmap_h,
             "sigma_p": sigma_p,
             "mu_q": mu_q,
             "sigma_q": sigma_q,
+            "theta_ff": theta_ff,
             "theta_h": theta_h,
             "theta": theta,
+            "vip_inh": vip_inh,
+            "sst_inh": sst_inhibition,
+            "z_h": raw_z,
             "z": z,
             "I_hat": I_hat,
-            "h": h
+            "temp_error": layer_2_error,
+            "h": h,
+            "h2": h2
         }
 
         if not self.perception_only:
             responses_t.update({
                 "action": action,
+                "value": value,
                 "action_value": action_value,
-                "lick_value": lick_value
+                "lick_value": lick_value,
+                "rl_gain": rl_gain
             })
 
         losses_t = {
@@ -182,8 +257,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         mean_total, mean_spatial, mean_temporal, mean_energy = 0., 0., 0., 0.
         
         # get initial states
-        h_0, z_0, theta_0 = self.init_state(Y.shape[0])
-        h_0, z_0, theta_0 = h_0.to(Y.device), z_0.to(Y.device), theta_0.to(Y.device)
+        responses_0 = self.init_state(Y.shape[0], Y.device)
         I_0 = torch.zeros_like(Y[:, 0])
 
         if lambda_spatial is None:
@@ -196,17 +270,21 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             lambda_reward = self.lambda_reward
         
         # go through the loop
-        for t in range(T):
+        for t in range(T):                    
             
             I_t = I_0 if t == 0 else Y[:, t-1]       # 1 timestep delay between input layer and representation layer
             
             # 1 timestep delay between higher layer and representation layer
-            z_m_1 = z_0 if t == 0 else sequence_responses[t-1]['z']
-            h_m_1 = h_0 if t == 0 else sequence_responses[t-1]['h']
-            theta_m_1 = theta_0 if t == 0 else sequence_responses[t-1]['theta_h']
+            responses_m_1 = responses_0 if t == 0 else sequence_responses[t-1]
+            
+            if self.bbtt_chunk is not None:
+                if (t + 1) % self.bbtt_chunk == 0:
+                    h_m_1 = h_m_1.detach()
+                    z_m_1 = z_m_1.detach()
+                    sst_inh_prev = sst_inh_prev.detach()
             
             # forward the model
-            responses_t, losses_t = self(I_t, h_m_1, z_m_1, theta_m_1, epsilon=epsilon)
+            responses_t, losses_t = self(I_t, responses_m_1, epsilon=epsilon)
             
             # compute the losses
             spatial_loss, temporal_loss, energy_loss = losses_t.values()
@@ -240,7 +318,29 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         
         return responses, losses
     
-    def init_state(self, batch_size):
+    def stabilize_recurrent_weights(self):
+        self.h_to_h.weight.data = StableRecurrent()(self.h_to_h.weight.data)
+    
+    def init_state(self, batch_size, device='cpu'):
+        
+        responses_0 = {
+            "mu_p": torch.zeros((batch_size, self.latent_dim)).to(device),
+            "sigmap_h": torch.zeros((batch_size, self.latent_dim)).to(device),
+            "sigma_p": torch.zeros((batch_size, self.latent_dim)).to(device),
+            "mu_q": torch.zeros((batch_size, self.latent_dim)).to(device),
+            "sigma_q": torch.zeros((batch_size, self.latent_dim)).to(device),
+            "theta_ff": torch.zeros((batch_size, self.theta_dim)).to(device),
+            "theta_h": torch.zeros((batch_size, self.theta_dim)).to(device),
+            "theta": torch.zeros((batch_size, self.theta_dim)).to(device),
+            "vip_inh": torch.zeros((batch_size, self.latent_dim)).to(device),
+            "sst_inh": torch.zeros((batch_size, self.latent_dim)).to(device),
+            "z_h": torch.zeros((batch_size, self.latent_dim)).to(device),
+            "z": torch.zeros((batch_size, self.latent_dim)).to(device),
+            "h": torch.zeros((batch_size, self.higher_state_dim)).to(device),
+            "h2": torch.zeros((batch_size, self.higher_state_dim)).to(device),
+            "value": torch.zeros((batch_size, self.value_dim)).to(device),
+            "rl_gain": torch.zeros((batch_size, 1)).to(device)
+        }
 
-        return torch.zeros((batch_size, self.higher_state_dim)), torch.zeros((batch_size, self.latent_dim)), torch.zeros((batch_size, self.theta_dim))
+        return responses_0
         

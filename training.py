@@ -1,4 +1,5 @@
 from torch.utils.data import Dataset
+from torch import nn
 import tqdm
 
 # dataset object to hold data
@@ -56,8 +57,11 @@ def training_epoch(model, optimizer, dataloader, epoch,
         
         # step the optimizer 
         optimizer.zero_grad()
-        total_loss.backward()
+        total_loss.backward()        
         optimizer.step()
+        
+        # stabilize recurrent dynamics
+        #model.stabilize_recurrent_weights()
         
         if progress_bar:
             # update the progress bar

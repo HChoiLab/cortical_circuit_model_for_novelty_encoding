@@ -2,21 +2,30 @@ from utils import data as dutils
 from utils.data import get_sequences
 from utils import stimuli as sutils
 import numpy as np
+import random
 import torch
 import os
 
 # functions to retrieve training data
-def fetch_sequences(args):
+def fetch_sequences(args, seed=None):
     
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        
     # load the images
     all_train = dutils.load_images_to_numpy_array(args.train_path, grayscale=True, num_images=len(os.listdir(args.train_path))) / 255
-    test_images = dutils.load_images_to_numpy_array(args.test_path, grayscale=True, num_images=args.num_test) / 255
+    all_test = dutils.load_images_to_numpy_array(args.test_path, grayscale=True, num_images=len(os.listdir(args.test_path))) / 255
+    all_images = np.concatenate((all_train, all_test))
     
-    train_images = all_train[:args.num_train]
+    indcs = np.random.choice(np.arange(len(all_images)), size=(args.num_train + args.num_test,), replace=False)
+    
+    train_images = all_images[indcs[:args.num_train]]
+    test_images = all_images[indcs[args.num_train:]]
     
     # normalize images
-    img_mean = np.mean(all_train, axis=0, keepdims=True)
-    img_std = np.std(all_train, axis=0, keepdims=True)
+    img_mean = np.mean(all_images) #, axis=0, keepdims=True)
+    img_std = np.std(all_images) #, axis=0, keepdims=True)
     
     train_images = (train_images - img_mean) / img_std
     test_images = (test_images - img_mean) / img_std
@@ -40,12 +49,14 @@ def fetch_sequences(args):
                                                     blank_ts=args.blank_ts,
                                                     pres_ts=args.img_ts,
                                                     num_presentations=args.num_pres,
-                                                    omission_prob=args.train_omission_prob)
+                                                    omission_prob=args.train_omission_prob,
+                                                    seed=seed)
     test_seqs, test_ts, test_oms = get_sequences(test_images, 
                                                  blank_ts=args.blank_ts,
                                                  pres_ts=args.img_ts,
                                                  num_presentations=args.num_pres,
-                                                 omission_prob=args.test_omission_prob)
+                                                 omission_prob=args.test_omission_prob,
+                                                 seed=seed)
 
     return train_seqs, train_ts, train_oms, test_seqs, test_ts, test_oms 
 

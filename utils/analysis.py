@@ -17,119 +17,40 @@ def process_outputs(args, model, data, output):
 def get_change_responses(args, train_responses, test_responses,
                          train_ts, test_ts,
                          test_oms, perception_only=True):
-
-    z_train, z_test = train_responses['z'], test_responses['z']
-    sigmap_train, sigmap_test = train_responses['sigma_p'], test_responses['sigma_p']
-    sigmaq_train, sigmaq_test = train_responses['sigma_q'], test_responses['sigma_q']
-    mup_train, mup_test = train_responses['mu_p'], test_responses['mu_p']
-    theta_train, theta_test = train_responses['theta'], test_responses['theta']
-    h_train, h_test = train_responses['h'], test_responses['h']
-    terror_train, terror_test = (train_responses['mu_p'] - train_responses['z'])**2, (test_responses['mu_p'] - test_responses['z'])**2
-
-    if not perception_only:
-        value_train, value_test = train_responses['lick_value'], test_responses['lick_value']
+    
+    num_train = train_responses['z'].shape[0]
     
     test_no_om_indcs = np.where(np.array(test_oms) <= 0)[0]
     num_test_no_omission = len(test_no_om_indcs)
 
     half_blank = args.blank_ts // 2
     trial_dur = 2 * half_blank + args.blank_ts + 2 * args.img_ts + 1
+    
+    familiar_resp = {k: torch.zeros(num_train, trial_dur, v.shape[-1]) for (k, v) in train_responses.items()}
+    novel_resp = {k: torch.zeros(num_test_no_omission, trial_dur, v.shape[-1]) for (k, v) in test_responses.items()}
 
-    z_train_change = torch.zeros(z_train.shape[0], trial_dur, z_train.shape[-1])
-    z_test_change = torch.zeros(num_test_no_omission, trial_dur, z_test.shape[-1])
-        
-    sigmap_train_change = torch.zeros(sigmap_train.shape[0], trial_dur, sigmap_train.shape[-1])
-    sigmap_test_change = torch.zeros(num_test_no_omission, trial_dur, sigmap_test.shape[-1])
-
-    sigmaq_train_change = torch.zeros(sigmaq_train.shape[0], trial_dur, sigmaq_train.shape[-1])
-    sigmaq_test_change = torch.zeros(num_test_no_omission, trial_dur, sigmaq_test.shape[-1])
-
-    theta_train_change = torch.zeros(theta_train.shape[0], trial_dur, theta_train.shape[-1])
-    theta_test_change = torch.zeros(num_test_no_omission, trial_dur, theta_test.shape[-1])
-
-    h_train_change = torch.zeros(h_train.shape[0], trial_dur, h_train.shape[-1])
-    h_test_change = torch.zeros(num_test_no_omission, trial_dur, h_test.shape[-1])
-
-    terror_train_change = torch.zeros(terror_train.shape[0], trial_dur, terror_train.shape[-1])
-    terror_test_change = torch.zeros(num_test_no_omission, trial_dur, terror_test.shape[-1])
-
-    mup_train_change = torch.zeros(mup_train.shape[0], trial_dur, mup_train.shape[-1])
-    mup_test_change = torch.zeros(num_test_no_omission, trial_dur, mup_test.shape[-1])
-
-    if not perception_only:
-        value_train_change = torch.zeros(value_train.shape[0], trial_dur)
-        value_test_change = torch.zeros(num_test_no_omission, trial_dur)
-
-    for s in range(z_train_change.shape[0]):
+    for s in range(num_train):
         start = train_ts[s]['before'][0][-1] - half_blank
         end = train_ts[s]['after'][1][0] + half_blank + 1
-        z_train_change[s] = z_train[s, start:end, :]
-        sigmaq_train_change[s] = sigmaq_train[s, start:end, :]
-        sigmap_train_change[s] = sigmap_train[s, start:end, :]
-        mup_train_change[s] = mup_train[s, start:end, :]
-        theta_train_change[s] = theta_train[s, start:end, :]
-        h_train_change[s] = h_train[s, start:end, :]
-        terror_train_change[s] = terror_train[s, start:end]
-
-        if not perception_only:
-            value_train_change[s] = value_train[s, start:end]
+        for k in familiar_resp.keys():
+            familiar_resp[k][s] = train_responses[k][s, start:end]
 
     for si in range(num_test_no_omission):
         s = test_no_om_indcs[si]
         start = test_ts[s]['before'][0][-1] - half_blank
         end = test_ts[s]['after'][1][0] + half_blank + 1
-        z_test_change[si] = z_test[s, start:end, :]
-        sigmaq_test_change[si] = sigmaq_test[s, start:end, :]
-        sigmap_test_change[si] = sigmap_test[s, start:end, :]
-        mup_test_change[si] = mup_test[s, start:end, :]
-        theta_test_change[si] = theta_test[s, start:end, :]
-        h_test_change[si] = h_test[s, start:end, :]
-        terror_test_change[si] = terror_test[s, start:end, :]
-
-        if not perception_only:
-            value_test_change[si] = value_test[s, start:end]
+        for k in novel_resp.keys():
+            novel_resp[k][si] = test_responses[k][s, start:end]
 
     # PV activity is the inverse of sigma_q but we assume zero still gets mapped to zero
-    pv_train_change = torch.where(sigmaq_train_change != 0, 1. / sigmaq_train_change, torch.zeros_like(sigmaq_train_change))
-    pv_test_change = torch.where(sigmaq_test_change != 0, 1. / sigmaq_test_change, torch.zeros_like(sigmaq_test_change))
+    familiar_resp['sigma_q'] = torch.where(familiar_resp['sigma_q'] != 0, 1. / familiar_resp['sigma_q'], torch.zeros_like(familiar_resp['sigma_q']))
+    novel_resp['sigma_q'] = torch.where(novel_resp['sigma_q'] != 0, 1. / novel_resp['sigma_q'], torch.zeros_like(novel_resp['sigma_q']))
     
     # fraction of active exc neurons
-    z_active_train = torch.count_nonzero(z_train_change, -1).unsqueeze(-1) / args.latent_dim
-    z_active_test = torch.count_nonzero(z_test_change, -1).unsqueeze(-1) / args.latent_dim
+    familiar_resp['frac_active'] = torch.count_nonzero(familiar_resp['z'], -1).unsqueeze(-1) / args.latent_dim
+    novel_resp['frac_active'] = torch.count_nonzero(novel_resp['z'], -1).unsqueeze(-1) / args.latent_dim
 
-    change_responses = {
-        "familiar": {
-            "exc": z_train_change,
-            "frac_active": z_active_train,
-            "pv": pv_train_change,
-            "vip": sigmap_train_change,
-            "sst_theta": theta_train_change,
-            "sst_mup": mup_train_change,
-            "h": h_train_change,
-            "temp_pred_error": terror_train_change,
-        },
-
-        "novel": {
-            "exc": z_test_change,
-            "frac_active": z_active_test,
-            "pv": pv_test_change,
-            "vip": sigmap_test_change,
-            "sst_theta": theta_test_change,
-            "sst_mup": mup_test_change,
-            "h": h_test_change,
-            "temp_pred_error": terror_test_change,
-        }
-    }
-
-    if not perception_only:
-        change_responses["familiar"].update({
-            "value": value_train_change.unsqueeze(-1)
-        })
-
-        change_responses["novel"].update({
-            "value": value_test_change.unsqueeze(-1)
-        })
-    
+    change_responses = {"familiar": familiar_resp, "novel": novel_resp}    
 
     return change_responses
 

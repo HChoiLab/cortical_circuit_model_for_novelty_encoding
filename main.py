@@ -3,6 +3,7 @@ import argparse
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
+import random
 
 from task import fetch_sequences, get_reward_sequence
 from model import EnergyConstrainedPredictiveCodingModel
@@ -16,20 +17,20 @@ def parse_args():
     """ data paths """
     parser.add_argument("--train_path", type=str, default="./datasets/train", help="Path to training (familiar) images")
     parser.add_argument("--test_path", type=str, default="./datasets/test", help="Path to test (novel) images")
-    parser.add_argument("--num_train", type=int, default=16, help="Number of training images to use")
-    parser.add_argument("--num_test", type=int, default=24, help="Number of test images to use")
+    parser.add_argument("--num_train", type=int, default=8, help="Number of training images to use")
+    parser.add_argument("--num_test", type=int, default=12, help="Number of test images to use")
 
     """ sequence setup """
     parser.add_argument("--image_dim", type=int, default=32)
     parser.add_argument("--blank_ts", type=int, default=5, help="Number of blank time steps")
     parser.add_argument("--img_ts", type=int, default=3, help="Number of image time steps")
-    parser.add_argument("--num_pres", type=int, default=6, help="Length of sequence, i.e. number of image presentations")
+    parser.add_argument("--num_pres", type=int, default=8, help="Length of sequence, i.e. number of image presentations")
     parser.add_argument("--train_omission_prob", type=float, default=0.0, help="Omission probability for familiar sequences")
     parser.add_argument("--test_omission_prob", type=float, default=0.3, help="Omission probability for novel sequences")
 
     """ model parameters """
     parser.add_argument("--latent_dim", type=float, default=64)
-    parser.add_argument("--h_dim", type=int, default=128)
+    parser.add_argument("--h_dim", type=int, default=64)
     parser.add_argument("--lambda_spatial", type=float, default=1.0)
     parser.add_argument("--lambda_temporal", type=float, default=1.0)
     parser.add_argument("--lambda_energy", type=float, default=1.0)
@@ -46,6 +47,14 @@ def parse_args():
 
     return parser.parse_known_args()[0]
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 def main(args):
 
     if args.seed is None:
@@ -53,22 +62,21 @@ def main(args):
     else:
         seed = args.seed
     
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    set_seed(seed)
 
     # train and test sequences
     args.train_omission_prob = 0.      # no omissions during training
-    train_seqs, train_ts, _, test_seqs, test_ts, test_oms = fetch_sequences(args)
+    train_seqs, train_ts, _, test_seqs, test_ts, test_oms = fetch_sequences(args, seed)
     y_dim = train_seqs.shape[-1]
 
     # train sequences with omissions (for omission analysis)
     args.train_omission_prob = args.test_omission_prob
-    train_om_seqs, train_om_ts, train_oms, _, _, _ = fetch_sequences(args)
+    train_om_seqs, train_om_ts, train_oms, _, _, _ = fetch_sequences(args, seed)
 
     # create reward tensor for train and test sequences
-    R_train = get_reward_sequence(*train_seqs.shape[:2], train_ts, reward_window=args.img_ts + 2, reward_amount=6.0, action_cost=1.0)
-    R_test = get_reward_sequence(*test_seqs.shape[:2], test_ts, reward_window=args.img_ts + 2, reward_amount=6.0, action_cost=1.0)
-    R_train_om = get_reward_sequence(*train_seqs.shape[:2], train_om_ts, reward_window=args.img_ts + 2, reward_amount=6.0, action_cost=1.0)
+    R_train = get_reward_sequence(*train_seqs.shape[:2], train_ts, reward_window=args.img_ts + 2, reward_amount=10.0, action_cost=2.0)
+    R_test = get_reward_sequence(*test_seqs.shape[:2], test_ts, reward_window=args.img_ts + 2, reward_amount=10.0, action_cost=2.0)
+    R_train_om = get_reward_sequence(*train_seqs.shape[:2], train_om_ts, reward_window=args.img_ts + 2, reward_amount=10.0, action_cost=2.0)
 
     # image sequences
     Y_train = torch.Tensor(train_seqs).float().to(args.device)
@@ -93,7 +101,7 @@ def main(args):
 
     # create lambda schedules
     lambda_temporal_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_temporal)
-    lambda_energy_sched = ramp_schedule(args.num_epochs, 100, stop=args.lambda_energy)
+    lambda_energy_sched = ramp_schedule(args.num_epochs, 75, stop=args.lambda_energy)
     lambda_rew_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_reward)
 
     # epsilon schedule for greedy exploration
@@ -145,3 +153,6 @@ def main(args):
     }
 
     return model, data, output
+
+if __name__ == '__main__':
+    main()
