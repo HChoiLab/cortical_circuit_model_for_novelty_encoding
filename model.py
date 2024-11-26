@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-from torch.nn.utils.parametrizations import weight_norm
 import math
 
 EPS = 1e-10
@@ -62,12 +61,9 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         
         # connections involved in the computation of theta
         self.theta_dim = latent_dim
-        self.h_to_theta = nn.Linear(higher_state_dim, self.theta_dim, bias=False)
         self.vip_to_theta = nn.Linear(latent_dim, self.theta_dim, bias=False)
         self.theta_to_z = nn.Linear(self.theta_dim, latent_dim, bias=False)
-        self.theta_to_theta = nn.Linear(self.theta_dim, self.theta_dim, bias=False)
-        
-        self.I_to_theta = nn.Linear(input_dim, self.theta_dim, bias=False)        # this is the main source of input drive to the sst theta population
+        self.I_to_theta = nn.Linear(input_dim, self.theta_dim, bias=False)                 # this is the main source of input drive to the sst theta population
     
         # connections to reconstruct input from z activity
         self.reconstruction = nn.Sequential(nn.Linear(latent_dim, 256, bias=False),
@@ -76,11 +72,9 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         # decision making and value learning
         self.value_dim = higher_state_dim
         self.h_to_value = nn.Linear(higher_state_dim, self.value_dim)
-        self.h2_to_value = nn.Linear(higher_state_dim, self.value_dim)
-        self.z_to_value = nn.Linear(latent_dim, self.value_dim)
         self.value_to_value = nn.Linear(self.value_dim, self.value_dim)
         
-        # experimental
+        # feedforward connections to SST neurons are not learnable
         for param in self.I_to_theta.parameters():
             param.requires_grad = False
             
@@ -91,9 +85,9 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         # multiply them by -1 when they're used for computation 
         nn.utils.parametrize.register_parametrization(self.vip_to_theta, 'weight', Positive())
         nn.utils.parametrize.register_parametrization(self.theta_to_z, 'weight', Positive())
-        nn.utils.parametrize.register_parametrization(self.theta_to_theta, 'weight', Positive())
         nn.utils.parametrize.register_parametrization(self.prior_sigma, 'bias', Positive())
         
+        # this makes sure the recurrent connections between the first higher area are stable
         nn.utils.parametrize.register_parametrization(self.h_to_h, 'weight', StableRecurrent())
     
     def initialize_params(self):
@@ -147,7 +141,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         
         # compute pyramidal activities (inferred z's)
         raw_z = mu_q + torch.randn_like(sigma_q) * (torch.sigmoid(0.01 * sigma_q) - 0.5)
-        raw_z = torch.relu(torch.tanh(raw_z)) # torch.clamp(raw_z, min=0., max=1.)
+        raw_z = torch.relu(torch.tanh(raw_z))
 
         # inhibitory input from SST to excitatory activity
         sst_inhibition = 0.8 * responses_m_1['sst_inh'] + self.theta_to_z(theta)
@@ -321,7 +315,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             "sst_inh": torch.zeros((batch_size, self.latent_dim)).to(device),
             "z_h": torch.zeros((batch_size, self.latent_dim)).to(device),
             "z": torch.zeros((batch_size, self.latent_dim)).to(device),
-            "h": torch.zeros((batch_size, self.higher_state_dim)).to(device),
+            "h": torch.ones((batch_size, self.higher_state_dim)).to(device),
             "h2": torch.zeros((batch_size, self.higher_state_dim)).to(device),
             "value": torch.zeros((batch_size, self.value_dim)).to(device),
             "rl_gain": torch.zeros((batch_size, 1)).to(device)

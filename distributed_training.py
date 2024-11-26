@@ -30,6 +30,7 @@ def train_model(seed, gpu_id, action=False):
     args.seed = seed
     args.device = torch.device(f'cuda:{gpu_id}')
     args.progress_mode = 'epoch'
+    args.calculate_dprime = True
     
     if not action:
         args.perception_only = True
@@ -46,7 +47,7 @@ def train_model(seed, gpu_id, action=False):
     
     # train
     model, data, output, training_progress = main.main(args)
-    change_responses, omission_responses = process_outputs(args, model, data, output)
+    change_responses, omission_responses = process_outputs(args, model, data, output, abdridged=True)
     save_dir = "results/perception_only" if not action else "results/perception_action"
     save_dir = os.path.join(SCRATCH, "novelty_encoding_model/" + save_dir)
     save_prefix = "perception_only" if not action else "perception_action"

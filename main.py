@@ -42,6 +42,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.0005)
     parser.add_argument("--num_epochs", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--calculate_dprime", action='store_true', default=False)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--progress_mode", type=str, default='batch')
 
@@ -113,6 +114,7 @@ def main(args):
     lr_sched = torch.optim.lr_scheduler.StepLR(opt, step_size=50, gamma=0.5)
 
     # train
+    calc_dprime = args.calculate_dprime
     training_progress = train(model, opt, train_dataloader,
                               lambda_temporal_sched,
                               lambda_energy_sched,
@@ -122,7 +124,7 @@ def main(args):
                               progress_mode=args.progress_mode,
                               num_epochs=args.num_epochs,
                               device=args.device,
-                              d_prime=True,
+                              d_prime=calc_dprime,
                               response_window=rew_window)
     
     # evaluation
