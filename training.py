@@ -18,6 +18,8 @@ class SequenceDataset(Dataset):
             return self.x[idx], self.R[idx]
 
         return self.x[idx], None
+
+
     
 
 # training functions

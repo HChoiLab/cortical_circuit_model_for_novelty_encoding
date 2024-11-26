@@ -48,17 +48,17 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         
         # connections from input to latents
         self.posterior_mu = nn.Linear(input_dim, latent_dim, bias=False)                # encodes input to mean of posterior
-        self.posterior_log_var = nn.Linear(input_dim, latent_dim, bias=False)           # encodes input to the log variance of the posterior
+        self.posterior_sigma = nn.Linear(input_dim, latent_dim, bias=False)            # encodes input to the variance of the posterior
         
         # connections to higher area
         self.z_to_h = nn.Linear(latent_dim, higher_state_dim, bias=False)                         # connections from latents to higher area
-        self.h_to_h = nn.Linear(higher_state_dim, higher_state_dim, bias=False)                            # connections from higher area to itself
+        self.h_to_h = nn.Linear(higher_state_dim, higher_state_dim, bias=False)                   # connections from higher area to itself
         self.h2_to_h2 = nn.Linear(higher_state_dim, higher_state_dim, bias=False)
         self.z_to_h2 = nn.Linear(latent_dim, higher_state_dim, bias=False)
         
         # connections from higher area
-        self.prior_mu = nn.Linear(higher_state_dim, latent_dim, bias=False)                 # encodes the mean of the prior distribution (represented by an SST subpopulation)
-        self.prior_log_var = nn.Linear(higher_state_dim, latent_dim, bias=True) # encodes the log variance of the prior (represented by VIP neurons)
+        self.prior_mu = nn.Linear(higher_state_dim, latent_dim, bias=False)                # encodes prior distribution mean (represented by an SST subpop)
+        self.prior_sigma = nn.Linear(higher_state_dim, latent_dim, bias=True)              # encodes prior variance (represented by VIP neurons)
         
         # connections involved in the computation of theta
         self.theta_dim = latent_dim
@@ -92,7 +92,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         nn.utils.parametrize.register_parametrization(self.vip_to_theta, 'weight', Positive())
         nn.utils.parametrize.register_parametrization(self.theta_to_z, 'weight', Positive())
         nn.utils.parametrize.register_parametrization(self.theta_to_theta, 'weight', Positive())
-        nn.utils.parametrize.register_parametrization(self.prior_log_var, 'bias', Positive())
+        nn.utils.parametrize.register_parametrization(self.prior_sigma, 'bias', Positive())
         
         nn.utils.parametrize.register_parametrization(self.h_to_h, 'weight', StableRecurrent())
     
@@ -107,9 +107,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         nn.init.normal_(self.I_to_theta.weight, mean=1e-2, std=1e-3)
         nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
         nn.init.normal_(self.theta_to_z.weight, mean=.2, std=1e-2)         
-        nn.init.normal_(self.prior_log_var.bias, mean=5., std=0.1)
-        #nn.init.normal_(self.vip_to_theta.bias, mean=2., std=0.1)
-        #nn.init.orthogonal_(self.h_to_h.weight)
+        nn.init.normal_(self.prior_sigma.bias, mean=5., std=0.1)
     
     def compute_reward_loss(self, R, actions, values):
         
@@ -133,55 +131,51 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         # get prior from previous higher area state
         mu_p = nn.functional.relu(self.prior_mu(responses_m_1['h2']))
         
-        sigmap_h = self.prior_log_var(responses_m_1['h']) 
+        sigmap_h = self.prior_sigma(responses_m_1['h']) 
         sigma_p = 0.8 * torch.relu(sigmap_h) + 0.2 * responses_m_1['sigma_p']
             
         # compute thetas
-        theta_nonlin = lambda x: torch.relu(torch.exp(0.5 * x) - 1.)
-        vip_inh = self.vip_to_theta(sigma_p) #+ 0.4 * self.vip_to_theta(sigmap_m_1)
+        vip_inh = self.vip_to_theta(sigma_p)
         theta_ff = 0.4 * responses_m_1['theta_ff'] + torch.exp(-50 * responses_m_1['theta_ff'].abs()) * self.I_to_theta(I_t)
-        #theta_ff = 0.7 * theta_ff_prev + torch.exp(-1e3 * theta_ff_prev.abs()) * torch.sign(I_t.mean(-1, keepdim=True).abs()) * 0.1
         theta_ff = torch.tanh(theta_ff)**2
-        #vip_inh = torch.sigmoid(vip_inh - 5.0)
-        theta_h = theta_ff * torch.exp(-vip_inh) #torch.sigmoid(vip_inh + 1.)) #* (1. - torch.sigmoid(vip_inh)) #/ (1 + torch.exp(vip_inh + 2.0)) #theta_bias + theta_ff - vip_inh
-        theta = 0.1 * responses_m_1['theta'] + theta_h #torch.relu(2. * torch.sigmoid(theta_h) - 1.0) #torch.relu(torch.exp(2. * theta_h)-1) #torch.relu(1 - torch.exp(-torch.exp(theta_h)+1))
+        theta_h = theta_ff * torch.exp(-vip_inh)
+        theta = 0.1 * responses_m_1['theta'] + theta_h
         
         # encode input to the posterior parameters
         mu_q = torch.relu(self.posterior_mu(I_t))
-        sigma_q = torch.relu(self.posterior_log_var(I_t))    # TODO
+        sigma_q = torch.relu(self.posterior_sigma(I_t))
         
         # compute pyramidal activities (inferred z's)
         raw_z = mu_q + torch.randn_like(sigma_q) * (torch.sigmoid(0.01 * sigma_q) - 0.5)
         raw_z = torch.relu(torch.tanh(raw_z)) # torch.clamp(raw_z, min=0., max=1.)
 
         # inhibitory input from SST to excitatory activity
-        sst_inhibition = 0.8 * responses_m_1['sst_inh'] + self.theta_to_z(theta) #torch.exp(-1e4 * theta_to_z) * (theta_to_z - torch.max(inh_prev, theta_to_z)) + torch.max(inh_prev, theta_to_z) 
+        sst_inhibition = 0.8 * responses_m_1['sst_inh'] + self.theta_to_z(theta)
         z = nn.functional.relu(raw_z - sst_inhibition)
         z_energy = nn.functional.relu(raw_z.detach() - sst_inhibition)
         
         # compute reconstruction (top down prediction from the representation layer)
-        I_hat = torch.sigmoid(self.reconstruction(z) - 2.0)    # TODO
+        I_hat = torch.sigmoid(self.reconstruction(z) - 2.0)
         
         # compute temporal prediction (top down prediction from the higher layer)
         z_hat = mu_p + torch.randn_like(mu_p) * sigma_p
         
          # evolve higher area activities
-        h = torch.relu(self.z_to_h(z) + self.h_to_h(responses_m_1['h']))    # TODO ###########################################
+        h = torch.relu(self.z_to_h(z) + self.h_to_h(responses_m_1['h']))
         h2 = torch.relu(self.z_to_h2(z) + self.h2_to_h2(responses_m_1['h2']))
 
         # error population activities
         layer_1_error = (I_t - I_hat) ** 2
-        sqrt2p = math.sqrt(2 * 3.14)
-        layer_2_error = (z - z_hat) ** 2 #torch.log(sqrt2p * sigma_p + EPS) + (z.detach() - mu_p)**2/(sigma_p**2 + EPS)
+        layer_2_error = (z - z_hat) ** 2
 
         # decision making if we are doing action
         if not self.perception_only:
-            value = self.h_to_value(h) + self.value_to_value(responses_m_1['value']) #+ self.z_to_value(z)
+            value = self.h_to_value(h) + self.value_to_value(responses_m_1['value'])
             lick_value = torch.tanh(value[:, :self.value_dim//2].mean(-1, keepdim=True))
             nolick_value = torch.tanh(value[:, self.value_dim//2:].mean(-1, keepdim=True))
 
             # probability of licking 
-            lick_prob = torch.exp(lick_value) / (torch.exp(lick_value) + torch.exp(nolick_value)) #torch.softmax(values, -1)[:, 1]
+            lick_prob = torch.exp(lick_value) / (torch.exp(lick_value) + torch.exp(nolick_value))
             
             # select action with exploration 
             action = self.act_with_exploration(lick_prob, epsilon)
@@ -191,11 +185,9 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             
             rl_gain =  0.2 * responses_m_1['rl_gain'] + 3. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()
             rl_gain = torch.relu(rl_gain)
-            #rl_gain = torch.relu( -1. * responses_m_1['rl_gain'] + 3. * action_value.detach())
             
             # Update VIP activities based on RL gain modulation
-            
-            sigmap_h += rl_gain # sigma_p * rl_gain
+            sigmap_h += rl_gain
             sigma_p = 0.8 * torch.relu(sigmap_h) + 0.2 * responses_m_1['sigma_p']
 
         # compute losses
@@ -266,9 +258,10 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             
             I_t = I_0 if t == 0 else Y[:, t-1]       # 1 timestep delay between input layer and representation layer
             
-            # 1 timestep delay between higher layer and representation layer
+            # responses from previous time step
             responses_m_1 = responses_0 if t == 0 else sequence_responses[t-1]
             
+            # if we are doing chunked backpropagation through time
             if self.bbtt_chunk is not None:
                 if (t + 1) % self.bbtt_chunk == 0:
                     h_m_1 = h_m_1.detach()
