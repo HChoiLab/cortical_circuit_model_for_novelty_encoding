@@ -45,7 +45,7 @@ def train_model(seed, gpu_id, action=False):
         args.lambda_spatial = 1.0
     
     # train
-    model, data, output = main.main(args)
+    model, data, output, training_progress = main.main(args)
     change_responses, omission_responses = process_outputs(args, model, data, output)
     save_dir = "results/perception_only" if not action else "results/perception_action"
     save_dir = os.path.join(SCRATCH, "novelty_encoding_model/" + save_dir)
@@ -54,7 +54,8 @@ def train_model(seed, gpu_id, action=False):
         "args": vars(args),
         "model": model.state_dict(),
         "change_responses": change_responses,
-        "omission_responses": omission_responses
+        "omission_responses": omission_responses,
+        "training_progress": training_progress
     }, os.path.join(save_dir, f"{save_prefix}_{args.seed}"))
 
 def run_training(gpu_seeds, action=False):

@@ -7,7 +7,7 @@ import random
 
 from task import fetch_sequences, get_reward_sequence
 from model import EnergyConstrainedPredictiveCodingModel
-from training import SequenceDataset, train
+from training import SequenceDataset, train, SequenceCollate
 from utils.schedules import ramp_schedule, decreasing_ramp_schedule
 
 # argument parser 
@@ -74,9 +74,10 @@ def main(args):
     train_om_seqs, train_om_ts, train_oms, _, _, _ = fetch_sequences(args, seed)
 
     # create reward tensor for train and test sequences
-    R_train = get_reward_sequence(*train_seqs.shape[:2], train_ts, reward_window=args.img_ts + 2, reward_amount=10.0, action_cost=2.0)
-    R_test = get_reward_sequence(*test_seqs.shape[:2], test_ts, reward_window=args.img_ts + 2, reward_amount=10.0, action_cost=2.0)
-    R_train_om = get_reward_sequence(*train_seqs.shape[:2], train_om_ts, reward_window=args.img_ts + 2, reward_amount=10.0, action_cost=2.0)
+    rew_window = args.img_ts + 2
+    R_train = get_reward_sequence(*train_seqs.shape[:2], train_ts, reward_window=rew_window, reward_amount=10.0, action_cost=2.0)
+    R_test = get_reward_sequence(*test_seqs.shape[:2], test_ts, reward_window=rew_window, reward_amount=10.0, action_cost=2.0)
+    R_train_om = get_reward_sequence(*train_seqs.shape[:2], train_om_ts, reward_window=rew_window, reward_amount=10.0, action_cost=2.0)
 
     # image sequences
     Y_train = torch.Tensor(train_seqs).float().to(args.device)
@@ -84,8 +85,8 @@ def main(args):
     Y_train_om = torch.Tensor(train_om_seqs).float().to(args.device)
 
     # create data loaders
-    train_dataset = SequenceDataset(Y_train, R_train)
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    train_dataset = SequenceDataset(Y_train, R_train, train_ts)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=SequenceCollate)
 
     # create model
     model = EnergyConstrainedPredictiveCodingModel(
@@ -112,15 +113,17 @@ def main(args):
     lr_sched = torch.optim.lr_scheduler.StepLR(opt, step_size=50, gamma=0.5)
 
     # train
-    train(model, opt, train_dataloader,
-          lambda_temporal_sched,
-          lambda_energy_sched,
-          lambda_rew_sched,
-          epsilon_sched,
-          lr_sched,
-          progress_mode=args.progress_mode,
-          num_epochs=args.num_epochs,
-          device=args.device)
+    training_progress = train(model, opt, train_dataloader,
+                              lambda_temporal_sched,
+                              lambda_energy_sched,
+                              lambda_rew_sched,
+                              epsilon_sched,
+                              lr_sched,
+                              progress_mode=args.progress_mode,
+                              num_epochs=args.num_epochs,
+                              device=args.device,
+                              d_prime=True,
+                              response_window=rew_window)
     
     # evaluation
     train_responses, _ = model.forward_sequence(Y_train.to(args.device), R_train.to(args.device), epsilon=0.)
@@ -152,7 +155,7 @@ def main(args):
         "train_om_indcs": train_om_indcs
     }
 
-    return model, data, output
+    return model, data, output, training_progress
 
 if __name__ == '__main__':
     main()

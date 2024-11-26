@@ -1,26 +1,51 @@
 from torch.utils.data import Dataset
+import torch
 from torch import nn
 import tqdm
+from utils.analysis import compute_dprime
+import numpy as np
+
+def SequenceCollate(batch):
+    
+    x = torch.stack([b[0] for b in batch])
+
+    r = None
+    if len(batch[0]) > 1:
+        r = torch.stack([b[1] for b in batch])
+    
+    ts = None
+    if len(batch[0]) > 2:
+        ts = [b[-1] for b in batch]
+    
+    return x, r, ts
 
 # dataset object to hold data
 class SequenceDataset(Dataset):
     
-    def __init__(self, data_tensor, rewards_tensor=None):
+    def __init__(self, data_tensor, rewards_tensor=None, ts_tensor=None):
         self.x = data_tensor
         self.R = rewards_tensor
+        self.ts_tensor = ts_tensor
     
     def __len__(self):
         return self.x.shape[0]
     
     def __getitem__(self, idx):
 
+        output = (self.x[idx],)
+
         if self.R is not None:
-            return self.x[idx], self.R[idx]
+            output += (self.R[idx],)
+        else:
+            output += (None,)
+        
+        if self.ts_tensor is not None:
+            output += (self.ts_tensor[idx],)
+        else:
+            output += (None,)
 
-        return self.x[idx], None
+        return output
 
-
-    
 
 # training functions
 def training_epoch(model, optimizer, dataloader, epoch,
@@ -29,7 +54,9 @@ def training_epoch(model, optimizer, dataloader, epoch,
                    lambda_reward_sched=None,
                    epsilon_sched=None,
                    progress_bar=True,
-                   device='cuda'):
+                   device='cuda',
+                   d_prime=False,
+                   response_window=None):
     
     lambda_temporal = None if lambda_temporal_sched is None else lambda_temporal_sched[epoch]
     lambda_energy = None if lambda_energy_sched is None else lambda_energy_sched[epoch]
@@ -43,8 +70,9 @@ def training_epoch(model, optimizer, dataloader, epoch,
         pbar = dataloader
 
     avg_losses = None
+    avg_dprime = 0. if d_prime & (not model.perception_only) else torch.nan
     
-    for _, (Y, R) in enumerate(pbar):
+    for _, (Y, R, ts) in enumerate(pbar):
         Y = Y.to(device)
         if R is not None:
             R = R.to(device)
@@ -61,9 +89,11 @@ def training_epoch(model, optimizer, dataloader, epoch,
         optimizer.zero_grad()
         total_loss.backward()        
         optimizer.step()
-        
-        # stabilize recurrent dynamics
-        #model.stabilize_recurrent_weights()
+
+        dp = torch.nan
+        if d_prime and (not model.perception_only):
+            dp = compute_dprime(ts, responses['action'], response_window=response_window)
+            avg_dprime += dp
         
         if progress_bar:
             # update the progress bar
@@ -72,12 +102,15 @@ def training_epoch(model, optimizer, dataloader, epoch,
                             temporal=losses['temporal_error'].item(),
                             energy=losses['energy'].item(),
                             rewards=losses['episode_rewards'].item(),
-                            value=losses['value_loss'].item())
+                            value=losses['value_loss'].item(),
+                            dprime=dp)
 
         if avg_losses is None:
             avg_losses = {k: v.item() for k, v in losses.items()}
         else:
             avg_losses = {k: avg_losses[k] + v.item() for k, v in losses.items()}
+        
+    avg_losses.update({'dprime': avg_dprime})
     
     avg_losses = {k: v / len(dataloader) for k, v in avg_losses.items()}
 
@@ -91,7 +124,9 @@ def train(model, optimizer, dataloader,
           lr_sched=None,
           num_epochs=50,
           progress_mode='batch',
-          device='cuda'):
+          device='cuda',
+          d_prime=False,
+          response_window=None):
     
     if progress_mode == 'none':
         pbar = range(num_epochs)
@@ -104,12 +139,16 @@ def train(model, optimizer, dataloader,
         epoch_bar = False
     else:
         raise
+    
+    training_progress = []
 
     for epoch in pbar:
         
         avg_losses = training_epoch(model, optimizer, dataloader, epoch, lambda_temporal_sched, lambda_energy_sched, lambda_reward_sched, epsilon_sched, device=device,
-                                    progress_bar=epoch_bar)
+                                    progress_bar=epoch_bar, d_prime=d_prime, response_window=response_window)
         
+        training_progress.append(avg_losses)
+                
         if lr_sched is not None:
             lr_sched.step()
         
@@ -119,4 +158,11 @@ def train(model, optimizer, dataloader,
                             temporal=avg_losses['temporal_error'],
                             energy=avg_losses['energy'],
                             rewards=avg_losses['episode_rewards'],
-                            value=avg_losses['value_loss'])
+                            value=avg_losses['value_loss'],
+                            dprime=avg_losses['dprime'])
+    
+    training_progress = {
+            k: np.stack([d[k] for d in training_progress]) for k in training_progress[0].keys()
+        }
+
+    return training_progress

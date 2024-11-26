@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import scipy.stats as stats
 
 def process_outputs(args, model, data, output):
     Y_train, Y_test, Y_train_om, train_ts, test_ts, train_om_ts, train_oms, test_oms = data.values()
@@ -124,5 +125,35 @@ def get_omission_responses(args, train_responses_om, test_responses, train_oms, 
 
     return omission_responses
 
-
+def compute_dprime(ts, actions, response_window):
     
+    num_catch, fas = 0, 0
+    num_go, hits = len(ts), 0
+
+    for si in range(len(ts)):
+
+        s = ts[si]
+
+        num_catch += len(s['before'][0]) + len(s['after'][0]) - 1
+
+        # find false alarms during catch trials
+        for tr in s['before'][0] + s['after'][0][1:]:
+            tr_actions = actions[si][tr:tr+response_window]
+            if torch.any(tr_actions).item():
+                fas += 1
+        
+        # find hits during go trial
+        go_ts = s['after'][0][0]
+        go_actions = actions[si][go_ts:go_ts+response_window]
+        if torch.any(go_actions).item():
+            hits += 1
+    
+    hit_rate = hits / num_go
+    fa_rate = fas / num_catch
+
+    hit_rate = min(max(hit_rate, 1 / (2 * num_go)), 1 - 1 / (2 * num_go))
+    fa_rate = min(max(fa_rate, 1 / (2 * num_catch)), 1 - 1 / (2 * num_catch))
+
+    dprime = stats.norm.ppf(hit_rate) - stats.norm.ppf(fa_rate)
+
+    return dprime
