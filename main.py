@@ -22,8 +22,8 @@ def parse_args():
 
     """ sequence setup """
     parser.add_argument("--image_dim", type=int, default=32)
-    parser.add_argument("--blank_ts", type=int, default=5, help="Number of blank time steps")
-    parser.add_argument("--img_ts", type=int, default=3, help="Number of image time steps")
+    parser.add_argument("--blank_ts", type=int, default=4, help="Number of blank time steps")
+    parser.add_argument("--img_ts", type=int, default=2, help="Number of image time steps")
     parser.add_argument("--num_pres", type=int, default=8, help="Length of sequence, i.e. number of image presentations")
     parser.add_argument("--train_omission_prob", type=float, default=0.0, help="Omission probability for familiar sequences")
     parser.add_argument("--test_omission_prob", type=float, default=0.3, help="Omission probability for novel sequences")

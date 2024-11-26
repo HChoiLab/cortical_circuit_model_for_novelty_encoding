@@ -2,6 +2,7 @@ import numpy as np
 from numpy.random import randint
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
+import seaborn as sns
 import scienceplots as scp
 import torch
 
@@ -11,7 +12,7 @@ def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mo
     if labels is None:
         labels = ["Familiar", "Novel"]
     if clrs is None:
-        clrs = ["darkorange", "darkblue"]
+        clrs = ['darkorange', 'darkblue']
     
     familiar_mean = familiar_responses.mean([0, -1]).detach()
     novel_mean = novel_responses.mean([0, -1]).detach()
@@ -33,8 +34,11 @@ def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mo
     
     # plot image presentations
     if trial_mode == 'change':
-        ax.axvspan(half_blank, half_blank + args.img_ts, color="r", alpha=0.05)
-        ax.axvspan(half_blank + args.blank_ts + args.img_ts, half_blank + args.blank_ts + 2 * args.img_ts, color="b", alpha=0.05)
+        pre_clr = sns.color_palette('pastel')[-3]
+        change_clr = sns.color_palette('husl', 9)[-2]
+        ax.axvspan(half_blank, half_blank + args.img_ts, color=pre_clr, alpha=0.25, edgecolor="none", linewidth=0, zorder=1)
+        ax.axvspan(half_blank + args.blank_ts + args.img_ts, half_blank + args.blank_ts + 2 * args.img_ts, color=change_clr, alpha=0.2,
+                   edgecolor="none", linewidth=0, zorder=1)
     
     elif trial_mode == 'omission':
         # first image
@@ -50,17 +54,18 @@ def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mo
     else:
         raise
         
-    ax.plot(familiar_mean.numpy(), label=labels[0], color=clrs[0], linewidth=3.0)
-    ax.plot(novel_mean.numpy(), label=labels[1], color=clrs[1], linewidth=3.0)
+    ax.plot(familiar_mean.numpy(), label=labels[0], color=clrs[0], linewidth=4.0)
+    ax.plot(novel_mean.numpy(), label=labels[1], color=clrs[1], linewidth=4.0)
     if sem:
         ax.fill_between(np.arange(familiar_responses.shape[1]),
                         familiar_mean - familiar_std,
                         familiar_mean + familiar_std,
-                        color=clrs[0], alpha=0.25)
+                        color=clrs[0], alpha=0.4)
         ax.fill_between(np.arange(novel_responses.shape[1]),
                         novel_mean - novel_std,
                         novel_mean + novel_std,
-                        color=clrs[1], alpha=0.25)
+                        color=clrs[1], alpha=0.4)
+    ax.tick_params(axis='both', which='major', labelsize=14)
 
 def plot_change_responses(args, ax, responses, label, clr, sem=True):
     response_mean = responses.mean([0, -1]).detach()

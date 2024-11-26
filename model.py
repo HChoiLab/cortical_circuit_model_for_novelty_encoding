@@ -15,7 +15,7 @@ class Negative(nn.Module):
         return -torch.relu(-X)
     
 class StableRecurrent(nn.Module):
-    MAX_NORM = 0.7
+    MAX_NORM = 0.5
     def forward(self, X):
         norm = X.norm()
         if norm > self.MAX_NORM:
@@ -107,7 +107,8 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         nn.init.normal_(self.I_to_theta.weight, mean=1e-2, std=1e-3)
         nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
         nn.init.normal_(self.theta_to_z.weight, mean=.2, std=1e-2)         
-        nn.init.normal_(self.prior_log_var.bias, mean=6., std=0.1)
+        nn.init.normal_(self.prior_log_var.bias, mean=5., std=0.1)
+        #nn.init.normal_(self.vip_to_theta.bias, mean=2., std=0.1)
         #nn.init.orthogonal_(self.h_to_h.weight)
     
     def compute_reward_loss(self, R, actions, values):
@@ -131,35 +132,26 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         
         # get prior from previous higher area state
         mu_p = nn.functional.relu(self.prior_mu(responses_m_1['h2']))
-
-        # value prediction and value-based modulation of VIP activity
-        # value computation
-        if not self.perception_only:            
-            # calculate sigma p with additional input from the value area
-            sigmap_h = self.prior_log_var(responses_m_1['h'])
-            
-            sigma_p = 0.8 * torch.relu(sigmap_h) + 0.2 * responses_m_1['sigma_p'] # nn.functional.softplus(sigmap_h, beta=5.0)
         
-        else:
-            sigmap_h = self.prior_log_var(responses_m_1['h']) 
-            sigma_p = 0.8 * torch.relu(sigmap_h) + 0.2 * responses_m_1['sigma_p']
+        sigmap_h = self.prior_log_var(responses_m_1['h']) 
+        sigma_p = 0.8 * torch.relu(sigmap_h) + 0.2 * responses_m_1['sigma_p']
             
         # compute thetas
-        theta_nonlin = lambda x: torch.relu(x)
+        theta_nonlin = lambda x: torch.relu(torch.exp(0.5 * x) - 1.)
         vip_inh = self.vip_to_theta(sigma_p) #+ 0.4 * self.vip_to_theta(sigmap_m_1)
-        theta_ff = 0.7 * responses_m_1['theta_ff'] + torch.exp(-50 * responses_m_1['theta_ff'].abs()) * self.I_to_theta(I_t)
+        theta_ff = 0.4 * responses_m_1['theta_ff'] + torch.exp(-50 * responses_m_1['theta_ff'].abs()) * self.I_to_theta(I_t)
         #theta_ff = 0.7 * theta_ff_prev + torch.exp(-1e3 * theta_ff_prev.abs()) * torch.sign(I_t.mean(-1, keepdim=True).abs()) * 0.1
         theta_ff = torch.tanh(theta_ff)**2
         #vip_inh = torch.sigmoid(vip_inh - 5.0)
-        theta_h = theta_ff * (1. - torch.sigmoid(vip_inh)) #* (1. - torch.sigmoid(vip_inh)) #/ (1 + torch.exp(vip_inh + 2.0)) #theta_bias + theta_ff - vip_inh
-        theta = 0.3 * responses_m_1['theta'] + theta_h #torch.relu(2. * torch.sigmoid(theta_h) - 1.0) #torch.relu(torch.exp(2. * theta_h)-1) #torch.relu(1 - torch.exp(-torch.exp(theta_h)+1))
+        theta_h = theta_ff * torch.exp(-vip_inh) #torch.sigmoid(vip_inh + 1.)) #* (1. - torch.sigmoid(vip_inh)) #/ (1 + torch.exp(vip_inh + 2.0)) #theta_bias + theta_ff - vip_inh
+        theta = 0.1 * responses_m_1['theta'] + theta_h #torch.relu(2. * torch.sigmoid(theta_h) - 1.0) #torch.relu(torch.exp(2. * theta_h)-1) #torch.relu(1 - torch.exp(-torch.exp(theta_h)+1))
         
         # encode input to the posterior parameters
         mu_q = torch.relu(self.posterior_mu(I_t))
-        sigma_q = torch.relu(self.posterior_log_var(I_t))
+        sigma_q = torch.relu(self.posterior_log_var(I_t))    # TODO
         
         # compute pyramidal activities (inferred z's)
-        raw_z = mu_q + torch.randn_like(sigma_q) * sigma_q
+        raw_z = mu_q + torch.randn_like(sigma_q) * (torch.sigmoid(0.01 * sigma_q) - 0.5)
         raw_z = torch.relu(torch.tanh(raw_z)) # torch.clamp(raw_z, min=0., max=1.)
 
         # inhibitory input from SST to excitatory activity
