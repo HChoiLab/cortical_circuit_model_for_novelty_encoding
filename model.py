@@ -315,7 +315,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             "sst_inh": torch.zeros((batch_size, self.latent_dim)).to(device),
             "z_h": torch.zeros((batch_size, self.latent_dim)).to(device),
             "z": torch.zeros((batch_size, self.latent_dim)).to(device),
-            "h": torch.ones((batch_size, self.higher_state_dim)).to(device),
+            "h": 10. * torch.ones((batch_size, self.higher_state_dim)).to(device),
             "h2": torch.zeros((batch_size, self.higher_state_dim)).to(device),
             "value": torch.zeros((batch_size, self.value_dim)).to(device),
             "rl_gain": torch.zeros((batch_size, 1)).to(device)
