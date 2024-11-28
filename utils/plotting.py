@@ -5,6 +5,7 @@ from matplotlib.ticker import FormatStrFormatter
 import seaborn as sns
 import scienceplots as scp
 import torch
+from utils.schedules import ramp_schedule
 
 
 def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mode='change', labels=None, clrs=None, sem=True, normalize=True):
@@ -233,3 +234,13 @@ def plot_sequence_response(responses, timestamps, seq_idx=0, pop_avg=False, perc
             ymin, ymax = ax1.get_ylim()
             vertical_center = (ymin + ymax) / 2
             ax1.plot(licks_inds.cpu().numpy(), [vertical_center]*len(licks_inds), 'bo', markersize=12, alpha=0.4)
+    
+def plot_training_progress(args, training_prog):
+    """
+    
+    """
+    
+    # get the different lambda schedules
+    lambda_temporal_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_temporal)
+    lambda_energy_sched = ramp_schedule(args.num_epochs, 75, stop=args.lambda_energy)
+    lambda_rew_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_reward)

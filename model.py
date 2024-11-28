@@ -132,7 +132,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         vip_inh = self.vip_to_theta(sigma_p)
         theta_ff = 0.4 * responses_m_1['theta_ff'] + torch.exp(-50 * responses_m_1['theta_ff'].abs()) * self.I_to_theta(I_t)
         theta_ff = torch.tanh(theta_ff)**2
-        theta_h = theta_ff * torch.exp(-vip_inh)
+        theta_h = theta_ff / (1 + vip_inh) #torch.sigmoid(-vip_inh)
         theta = 0.1 * responses_m_1['theta'] + theta_h
         
         # encode input to the posterior parameters
@@ -315,7 +315,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             "sst_inh": torch.zeros((batch_size, self.latent_dim)).to(device),
             "z_h": torch.zeros((batch_size, self.latent_dim)).to(device),
             "z": torch.zeros((batch_size, self.latent_dim)).to(device),
-            "h": 10. * torch.ones((batch_size, self.higher_state_dim)).to(device),
+            "h": torch.zeros((batch_size, self.higher_state_dim)).to(device),
             "h2": torch.zeros((batch_size, self.higher_state_dim)).to(device),
             "value": torch.zeros((batch_size, self.value_dim)).to(device),
             "rl_gain": torch.zeros((batch_size, 1)).to(device)
