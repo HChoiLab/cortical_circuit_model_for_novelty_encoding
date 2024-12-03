@@ -45,6 +45,11 @@ def parse_args():
     parser.add_argument("--calculate_dprime", action='store_true', default=False)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--progress_mode", type=str, default='batch')
+    
+    # when to start optimizing different objective function
+    parser.add_argument("--temporal_start", type=int, default=50)
+    parser.add_argument("--energy_start", type=int, default=75)
+    parser.add_argument("--value_start", type=int, default=50)
 
     return parser.parse_known_args()[0]
 
@@ -102,12 +107,13 @@ def main(args):
     ).to(args.device)
 
     # create lambda schedules
-    lambda_temporal_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_temporal)
-    lambda_energy_sched = ramp_schedule(args.num_epochs, 75, stop=args.lambda_energy)
-    lambda_rew_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_reward)
+    lambda_temporal_sched = ramp_schedule(args.num_epochs, args.temporal_start, stop=args.lambda_temporal)
+    lambda_energy_sched = ramp_schedule(args.num_epochs, args.energy_start, stop=args.lambda_energy)
+    lambda_rew_sched = ramp_schedule(args.num_epochs, args.value_start, stop=args.lambda_reward)
 
     # epsilon schedule for greedy exploration
-    epsilon_sched = decreasing_ramp_schedule(args.num_epochs, 50, 0.9, 0.001, decay_episodes=args.num_epochs)
+    epsilon_sched = decreasing_ramp_schedule(args.num_epochs, args.value_start,
+                                             0.9, 0.001, decay_episodes=args.num_epochs)
 
     # create optimizer and learning rate schedule
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)

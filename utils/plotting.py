@@ -5,7 +5,7 @@ from matplotlib.ticker import FormatStrFormatter
 import seaborn as sns
 import scienceplots as scp
 import torch
-from utils.schedules import ramp_schedule
+from utils.schedules import ramp_schedule, decreasing_ramp_schedule
 
 
 def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mode='change', labels=None, clrs=None, sem=True, normalize=True):
@@ -235,12 +235,102 @@ def plot_sequence_response(responses, timestamps, seq_idx=0, pop_avg=False, perc
             vertical_center = (ymin + ymax) / 2
             ax1.plot(licks_inds.cpu().numpy(), [vertical_center]*len(licks_inds), 'bo', markersize=12, alpha=0.4)
     
-def plot_training_progress(args, training_prog):
+def plot_training_progress(args, training_prog, save_fig=False):
     """
     
     """
+
+    def plot_dprimes(ax, epoch_arr, dprime_fam, dprime_nov, xlabel=None, title=None):
+
+        # Plot familiar d'
+        color1 = 'darkorange'
+        ax.plot(epoch_arr, dprime_fam, color=color1, linewidth=2, label='Familiar')
+        ax.set_ylabel(r"$d'$", color="tab:blue", fontsize=16)
+        ax.tick_params(axis='y', labelcolor="tab:blue", labelsize=14)
+        ax.tick_params(axis='x', labelsize=14)
+
+        # Plot novel d'
+        color2 = 'darkblue'
+        ax.plot(epoch_arr, dprime_nov, color=color2, linewidth=2, label='Novel')
+
+        # Plot chance level performance
+        ax.plot(epoch_arr, np.zeros_like(dprime_fam), '--', linewidth=2, color='tab:gray', label='Chance')
+
+        if xlabel is not None:
+            ax.set_xlabel(xlabel, fontsize=16)
+        
+        if title is not None:
+            ax.set_title(title, fontsize=20)
+        
+        ax.legend(loc='upper left', fontsize='x-small', frameon=False)
+
+    def plot_prog_and_schedule(ax, prog_array, sched_array,
+                               xlabel=None, title=None,
+                               prog_label='Loss', sched_label=r"$\lambda$"):
+
+        # Plot the first dataset
+        color1 = 'tab:blue'
+        ax.plot(np.arange(len(prog_array)), prog_array, color=color1, linewidth=2, label=prog_label)
+        if xlabel is not None:
+            ax.set_xlabel(xlabel, fontsize=16)
+        ax.set_ylabel(prog_label, color=color1, fontsize=16)
+        ax.tick_params(axis='y', labelcolor=color1, labelsize=14)
+        ax.tick_params(axis='x', labelsize=14)
+
+        # Create a second y-axis
+        twin_ax = ax.twinx()
+
+        # Plot the second dataset
+        color2 = 'tab:red'
+        twin_ax.plot(np.arange(len(prog_array)), sched_array, color=color2, linewidth=2, linestyle='--', label=sched_label)
+        twin_ax.set_ylabel(sched_label, color=color2, fontsize=16)
+        twin_ax.tick_params(axis='y', labelcolor=color2, labelsize=14)
+
+        # Add a legend (optional)
+        lines_1, labels_1 = ax.get_legend_handles_labels()
+        lines_2, labels_2 = twin_ax.get_legend_handles_labels()
+        #ax.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left', fontsize=12)
+
+        if title is not None:
+            ax.set_title(title, fontsize=20) 
     
-    # get the different lambda schedules
-    lambda_temporal_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_temporal)
-    lambda_energy_sched = ramp_schedule(args.num_epochs, 75, stop=args.lambda_energy)
-    lambda_rew_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_reward)
+    # create lambda schedules
+    lambda_spatial_sched = args.lambda_spatial * np.ones(args.num_epochs)
+    lambda_temporal_sched = ramp_schedule(args.num_epochs, args.temporal_start, stop=args.lambda_temporal)
+    lambda_energy_sched = ramp_schedule(args.num_epochs, args.energy_start, stop=args.lambda_energy)
+    lambda_rew_sched = ramp_schedule(args.num_epochs, args.value_start, stop=args.lambda_reward)
+
+    # epsilon schedule for greedy exploration
+    epsilon_sched = decreasing_ramp_schedule(args.num_epochs, args.value_start,
+                                             0.9, 0.001, decay_episodes=args.num_epochs)
+    
+    # plot each schedule
+    fig, axs = plt.subplots(2, 3, figsize=(12, 5), sharex='col')
+    #with plt.style.context(['nature']):
+        
+    plot_prog_and_schedule(axs[0, 0], training_prog['spatial_error'].mean(0), lambda_spatial_sched,
+                            title="Layer 1 Error", prog_label=r"$L_{pred}^{(1)}$", sched_label=r"$\lambda_2$")
+    
+    plot_prog_and_schedule(axs[0, 1], training_prog['temporal_error'].mean(0), lambda_temporal_sched,
+                            title='Layer 2 Error', prog_label=r"$L_{pred}^{(2)}$", sched_label=r"$\lambda_2$")
+    
+    plot_prog_and_schedule(axs[0, 2], training_prog['energy'].mean(0), lambda_energy_sched,
+                            title="Energy Loss", prog_label=r"$L_{energy}$", sched_label=r"$\lambda_{energy}$")
+    
+    plot_prog_and_schedule(axs[1, 0], training_prog['value_loss'].mean(0), lambda_rew_sched,
+                            title="Reward Prediction Error", prog_label=r"$L_{action}$", sched_label=r"$\lambda_{action}$", xlabel='Epoch')
+    
+    plot_prog_and_schedule(axs[1, 1], training_prog['episode_rewards'].mean(0), epsilon_sched,
+                            title="Reward", prog_label="Mean Reward", sched_label=r"$\epsilon$", xlabel='Epoch')
+    
+    plot_dprimes(axs[1, 2], np.arange(args.num_epochs, step=5.), training_prog['dprime'].mean(0), training_prog['dprime_novel'].mean(0),
+                 title="Behavioral Performance", xlabel='Epoch')
+    
+    fig.tight_layout()
+
+    if save_fig:
+        fig.savefig("./figures/training_progress.pdf", dpi=800)
+    
+    return fig
+
+        
