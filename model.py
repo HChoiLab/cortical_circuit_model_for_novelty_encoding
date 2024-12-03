@@ -100,8 +100,8 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         # specific initialization constraints
         nn.init.normal_(self.I_to_theta.weight, mean=1e-2, std=1e-3)
         nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
-        nn.init.normal_(self.theta_to_z.weight, mean=.2, std=1e-2)         
-        nn.init.normal_(self.prior_sigma.bias, mean=5., std=0.1)
+        nn.init.normal_(self.theta_to_z.weight, mean=0.2, std=1e-2)
+        nn.init.normal_(self.prior_sigma.bias, mean=5.0, std=0.1)
     
     def compute_reward_loss(self, R, actions, values):
         
@@ -126,19 +126,19 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         mu_p = nn.functional.relu(self.prior_mu(responses_m_1['h2']))
         
         sigmap_h = self.prior_sigma(responses_m_1['h']) 
-        sigma_p = 0.8 * torch.relu(sigmap_h) + 0.2 * responses_m_1['sigma_p']
+        sigma_p = 0.2 * responses_m_1['sigma_p'] + 0.8 * torch.relu(sigmap_h)
             
         # compute thetas
         vip_inh = self.vip_to_theta(sigma_p)
         theta_ff = 0.4 * responses_m_1['theta_ff'] + torch.exp(-50 * responses_m_1['theta_ff'].abs()) * self.I_to_theta(I_t)
         theta_ff = torch.tanh(theta_ff)**2
-        theta_h = theta_ff / (1 + vip_inh) #torch.sigmoid(-vip_inh)
+        theta_h = theta_ff * torch.exp(-0.5 * vip_inh**2)
         theta = 0.1 * responses_m_1['theta'] + theta_h
         
         # encode input to the posterior parameters
         mu_q = torch.relu(self.posterior_mu(I_t))
         sigma_q = torch.relu(self.posterior_sigma(I_t))
-        
+
         # compute pyramidal activities (inferred z's)
         raw_z = mu_q + torch.randn_like(sigma_q) * (torch.sigmoid(0.01 * sigma_q) - 0.5)
         raw_z = torch.relu(torch.tanh(raw_z))
@@ -177,12 +177,12 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             # predicted value of action
             action_value = action * lick_value + (1 - action) * nolick_value
             
-            rl_gain =  0.2 * responses_m_1['rl_gain'] + 3. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()
+            rl_gain =  0.2 * responses_m_1['rl_gain'] + 4. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()
             rl_gain = torch.relu(rl_gain)
             
             # Update VIP activities based on RL gain modulation
-            sigmap_h += rl_gain
-            sigma_p = 0.8 * torch.relu(sigmap_h) + 0.2 * responses_m_1['sigma_p']
+            sigmap_h = sigmap_h + rl_gain
+            sigma_p = 0.2 * responses_m_1['sigma_p'] + 0.8 * torch.relu(sigmap_h)
 
         # compute losses
         spatial_error_loss = layer_1_error.mean()

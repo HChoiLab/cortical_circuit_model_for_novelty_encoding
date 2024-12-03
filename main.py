@@ -102,12 +102,12 @@ def main(args):
     ).to(args.device)
 
     # create lambda schedules
-    lambda_temporal_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_temporal)
-    lambda_energy_sched = ramp_schedule(args.num_epochs, 75, stop=args.lambda_energy)
-    lambda_rew_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_reward)
+    lambda_temporal_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_temporal, stop_epoch=args.num_epochs-50)
+    lambda_energy_sched = ramp_schedule(args.num_epochs, 75, stop=args.lambda_energy, stop_epoch=args.num_epochs-50)
+    lambda_rew_sched = ramp_schedule(args.num_epochs, 50, stop=args.lambda_reward, stop_epoch=args.num_epochs-50)
 
     # epsilon schedule for greedy exploration
-    epsilon_sched = decreasing_ramp_schedule(args.num_epochs, 50, 0.9, 0.001, decay_episodes=args.num_epochs)
+    epsilon_sched = decreasing_ramp_schedule(args.num_epochs, 50, 0.5, 0.001, decay_episodes=args.num_epochs)
 
     # create optimizer and learning rate schedule
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -125,7 +125,8 @@ def main(args):
                               num_epochs=args.num_epochs,
                               device=args.device,
                               d_prime=calc_dprime,
-                              response_window=rew_window)
+                              response_window=rew_window,
+                              test_sequences=(Y_test.to(args.device), R_test.to(args.device), test_ts))
     
     # evaluation
     train_responses, _ = model.forward_sequence(Y_train.to(args.device), R_train.to(args.device), epsilon=0.)

@@ -30,7 +30,7 @@ def train_model(seed, gpu_id, action=False):
     args.seed = seed
     args.device = torch.device(f'cuda:{gpu_id}')
     args.progress_mode = 'epoch'
-    args.num_epochs = 250
+    args.num_epochs = 200
     args.calculate_dprime = True
     
     if not action:
@@ -42,7 +42,7 @@ def train_model(seed, gpu_id, action=False):
     else:
         args.perception_only = False
         args.lambda_reward = 0.5
-        args.lambda_temporal = 5.0
+        args.lambda_temporal = 1.0
         args.lambda_energy = 10.0
         args.lambda_spatial = 1.0
     
