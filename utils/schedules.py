@@ -25,12 +25,14 @@ def ramp_schedule(n_epochs, epoch_thresh, start=0.0, stop=1.0, stop_epoch=None):
         L[stop_epoch:] = stop
     return L
 
-def decreasing_ramp_schedule(n_epochs, epoch_thresh, start=0.25, stop=0.05, decay_episodes=None):
-    if decay_episodes is None:
-        decay_episodes = n_epochs
+def decreasing_ramp_schedule(n_epochs, epoch_thresh, start=0.25, stop=0.05, stop_epoch=None):
+    if stop_epoch is None:
+        stop_epoch = n_epochs
     L = np.ones(n_epochs) * start
-    eps = np.arange(epoch_thresh, n_epochs+1) - epoch_thresh
-    L[int(epoch_thresh - 1):] = np.maximum(stop, start - (start - stop) * (eps / (decay_episodes - epoch_thresh)))
+    eps = np.arange(epoch_thresh, stop_epoch+1) - epoch_thresh
+    L[int(epoch_thresh - 1):stop_epoch] = np.maximum(stop, start - (start - stop) * (eps / (stop_epoch - epoch_thresh)))
+    if stop_epoch != n_epochs:
+        L[stop_epoch:] = stop
     
     return L
 
