@@ -98,9 +98,9 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         self.apply(init_weights)
         
         # specific initialization constraints
-        nn.init.normal_(self.I_to_theta.weight, mean=1e-2, std=1e-3)
-        nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
-        nn.init.normal_(self.theta_to_z.weight, mean=0.2, std=1e-2)
+        #nn.init.normal_(self.I_to_theta.weight, mean=1e-2, std=1e-3)
+        #nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
+        #nn.init.normal_(self.theta_to_z.weight, mean=0.2, std=1e-2)
         nn.init.normal_(self.prior_sigma.bias, mean=5.0, std=0.1)
     
     def compute_reward_loss(self, R, actions, values):

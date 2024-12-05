@@ -296,9 +296,12 @@ def plot_training_progress(args, training_prog, save_fig=False):
     
     # create lambda schedules
     lambda_spatial_sched = args.lambda_spatial * np.ones(args.num_epochs)
-    lambda_temporal_sched = ramp_schedule(args.num_epochs, args.temporal_start, stop=args.lambda_temporal)
-    lambda_energy_sched = ramp_schedule(args.num_epochs, args.energy_start, stop=args.lambda_energy)
-    lambda_rew_sched = ramp_schedule(args.num_epochs, args.value_start, stop=args.lambda_reward)
+    lambda_temporal_sched = ramp_schedule(args.num_epochs, args.temporal_start, stop=args.lambda_temporal,
+                                          stop_epoch=args.num_epochs-50)
+    lambda_energy_sched = ramp_schedule(args.num_epochs, args.energy_start, stop=args.lambda_energy,
+                                        stop_epoch=args.num_epochs-50)
+    lambda_rew_sched = ramp_schedule(args.num_epochs, args.value_start, stop=args.lambda_reward,
+                                     stop_epoch=args.num_epochs-50)
 
     # epsilon schedule for greedy exploration
     epsilon_sched = decreasing_ramp_schedule(args.num_epochs, args.value_start,
@@ -332,5 +335,3 @@ def plot_training_progress(args, training_prog, save_fig=False):
         fig.savefig("./figures/training_progress.pdf", dpi=800)
     
     return fig
-
-        
