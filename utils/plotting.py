@@ -305,7 +305,7 @@ def plot_training_progress(args, training_prog, save_fig=False):
 
     # epsilon schedule for greedy exploration
     epsilon_sched = decreasing_ramp_schedule(args.num_epochs, args.value_start,
-                                             0.9, 0.001, decay_episodes=args.num_epochs)
+                                             0.5, 0.01, stop_epoch=args.num_epochs-50)
     
     # plot each schedule
     fig, axs = plt.subplots(2, 3, figsize=(12, 5), sharex='col')

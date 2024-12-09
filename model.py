@@ -98,10 +98,10 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         self.apply(init_weights)
         
         # specific initialization constraints
-        #nn.init.normal_(self.I_to_theta.weight, mean=1e-2, std=1e-3)
-        #nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
-        #nn.init.normal_(self.theta_to_z.weight, mean=0.2, std=1e-2)
-        nn.init.normal_(self.prior_sigma.bias, mean=5.0, std=0.1)
+        nn.init.normal_(self.I_to_theta.weight, mean=1e-2, std=1e-3)
+        nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
+        nn.init.normal_(self.theta_to_z.weight, mean=0.2, std=1e-2)
+        nn.init.normal_(self.prior_sigma.bias, mean=3.0, std=0.1)
     
     def compute_reward_loss(self, R, actions, values):
         
@@ -132,7 +132,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         vip_inh = self.vip_to_theta(sigma_p)
         theta_ff = 0.4 * responses_m_1['theta_ff'] + torch.exp(-50 * responses_m_1['theta_ff'].abs()) * self.I_to_theta(I_t)
         theta_ff = torch.tanh(theta_ff)**2
-        theta_h = theta_ff * torch.exp(-0.5 * vip_inh**2)
+        theta_h = theta_ff * torch.exp(-.5 * vip_inh**2)
         theta = 0.1 * responses_m_1['theta'] + theta_h
         
         # encode input to the posterior parameters
@@ -141,7 +141,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
 
         # compute pyramidal activities (inferred z's)
         raw_z = mu_q + torch.randn_like(sigma_q) * (torch.sigmoid(0.01 * sigma_q) - 0.5)
-        raw_z = torch.relu(torch.tanh(raw_z))
+        raw_z = torch.relu(torch.tanh(0.2 * raw_z))
 
         # inhibitory input from SST to excitatory activity
         sst_inhibition = 0.8 * responses_m_1['sst_inh'] + self.theta_to_z(theta)
