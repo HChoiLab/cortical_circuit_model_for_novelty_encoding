@@ -143,7 +143,11 @@ def train(model, optimizer, dataloader,
     
     training_progress = []
     dprime_familiar, dprime_novel = [], []
+    learning_rates = []
     last_dprime = torch.nan
+    
+    if lr_sched is not None:
+        learning_rates += [lr_sched.get_last_lr()[0]]
     
     for epoch in pbar:
         
@@ -151,7 +155,7 @@ def train(model, optimizer, dataloader,
         if epoch % 5 != 0:
             dprime_epoch = False
         else:
-            dprime_epoch = d_prime
+            dprime_epoch = d_prime and (not model.perception_only)
         
         avg_losses = training_epoch(model, optimizer, dataloader, epoch, lambda_temporal_sched, lambda_energy_sched, lambda_reward_sched, epsilon_sched, device=device,
                                     progress_bar=epoch_bar, d_prime=dprime_epoch, response_window=response_window)
@@ -164,6 +168,7 @@ def train(model, optimizer, dataloader,
                 
         if lr_sched is not None:
             lr_sched.step()
+            learning_rates += [lr_sched.get_last_lr()[0]]
         
         if progress_mode == 'epoch':
             pbar.set_postfix(total=avg_losses['total'],
@@ -175,13 +180,12 @@ def train(model, optimizer, dataloader,
                             dprime=last_dprime)
             
         # compute d_prime for the novel sequences every 5 epochs
-        if d_prime:
-            if epoch % 5 == 0:
-                with torch.no_grad():
-                    test_x, test_r, test_ts = test_sequences
-                    test_responses, _ = model.forward_sequence(test_x, test_r, epsilon=0.1 if epsilon_sched is None else epsilon_sched[epoch])
-                    test_dprime = compute_dprime(test_ts, test_responses['action'], response_window=response_window)
-                    dprime_novel.append(test_dprime)
+        if dprime_epoch:
+            with torch.no_grad():
+                test_x, test_r, test_ts = test_sequences
+                test_responses, _ = model.forward_sequence(test_x, test_r, epsilon=0.1 if epsilon_sched is None else epsilon_sched[epoch])
+                test_dprime = compute_dprime(test_ts, test_responses['action'], response_window=response_window)
+                dprime_novel.append(test_dprime)
             
     training_progress = {
             k: np.stack([d[k] for d in training_progress]) for k in training_progress[0].keys()
@@ -189,5 +193,6 @@ def train(model, optimizer, dataloader,
     
     training_progress['dprime'] = np.array(dprime_familiar)
     training_progress['dprime_novel'] = np.array(dprime_novel)
+    training_progress['lr'] = np.array(learning_rates)
 
     return training_progress
