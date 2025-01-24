@@ -5,7 +5,9 @@ from matplotlib.ticker import FormatStrFormatter
 import seaborn as sns
 import scienceplots as scp
 import torch
-from utils.schedules import ramp_schedule, decreasing_ramp_schedule
+from utils.schedules import ramp_schedule, decreasing_ramp_schedule, stepLR_schedule
+from task import get_reward_sequence
+from utils.analysis import compute_population_stats
 
 
 def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mode='change', labels=None, clrs=None, sem=True, normalize=True):
@@ -87,6 +89,8 @@ def plot_change_responses(args, ax, responses, label, clr, sem=True):
 def plot_omission_responses(args, ax, responses, label, image_clr, trace_clr, sem=True):
     response_mean = responses.mean([0, -1]).detach()
     response_std = responses.mean(-1).std(0).detach() / np.sqrt(responses.shape[0])
+
+    image_clr = sns.color_palette('pastel')[-3]
     
     # first image
     ax.axvspan(args.blank_ts // 2, args.blank_ts // 2 + args.img_ts, color=image_clr, alpha=0.05)
@@ -234,27 +238,30 @@ def plot_sequence_response(responses, timestamps, seq_idx=0, pop_avg=False, perc
             ymin, ymax = ax1.get_ylim()
             vertical_center = (ymin + ymax) / 2
             ax1.plot(licks_inds.cpu().numpy(), [vertical_center]*len(licks_inds), 'bo', markersize=12, alpha=0.4)
-    
-def plot_training_progress(args, training_prog, save_fig=False):
-    """
-    
-    """
 
-    def plot_dprimes(ax, epoch_arr, dprime_fam, dprime_nov, xlabel=None, title=None):
+def plot_dprimes(ax, epoch_arr, dprime_fam, dprime_nov, xlabel=None, title=None):
+        
+        fam_mean = dprime_fam.mean(0)
+        fam_sem = dprime_fam.std(0) / np.sqrt(len(dprime_fam))
+
+        nov_mean = dprime_nov.mean(0)
+        nov_sem = dprime_nov.std(0) / np.sqrt(len(dprime_nov))
 
         # Plot familiar d'
         color1 = 'darkorange'
-        ax.plot(epoch_arr, dprime_fam, color=color1, linewidth=2, label='Familiar')
-        ax.set_ylabel(r"$d'$", color="tab:blue", fontsize=16)
-        ax.tick_params(axis='y', labelcolor="tab:blue", labelsize=14)
+        ax.errorbar(epoch_arr, fam_mean, fam_sem, fmt='-o', color=color1, ecolor=color1, linewidth=2.5,
+                    elinewidth=1.5, markersize=5, label='Familiar')
+        ax.set_ylabel(r"$d'$", fontsize=16)
+        ax.tick_params(axis='y', labelsize=14)
         ax.tick_params(axis='x', labelsize=14)
 
         # Plot novel d'
         color2 = 'darkblue'
-        ax.plot(epoch_arr, dprime_nov, color=color2, linewidth=2, label='Novel')
+        ax.errorbar(epoch_arr, nov_mean, nov_sem, fmt='-o', color=color2, ecolor=color2, linewidth=2.5,
+                    elinewidth=1.5, markersize=5, label='Novel')
 
         # Plot chance level performance
-        ax.plot(epoch_arr, np.zeros_like(dprime_fam), '--', linewidth=2, color='tab:gray', label='Chance')
+        ax.plot(epoch_arr, np.zeros_like(fam_mean), '--', linewidth=2, color='tab:gray', label='Chance')
 
         if xlabel is not None:
             ax.set_xlabel(xlabel, fontsize=16)
@@ -262,7 +269,12 @@ def plot_training_progress(args, training_prog, save_fig=False):
         if title is not None:
             ax.set_title(title, fontsize=20)
         
-        ax.legend(loc='upper left', fontsize='x-small', frameon=False)
+        ax.legend(loc='upper left', frameon=False)
+    
+def plot_training_progress(args, training_prog, save_fig=False):
+    """
+    
+    """
 
     def plot_prog_and_schedule(ax, prog_array, sched_array,
                                xlabel=None, title=None,
@@ -307,27 +319,33 @@ def plot_training_progress(args, training_prog, save_fig=False):
     epsilon_sched = decreasing_ramp_schedule(args.num_epochs, args.value_start,
                                              0.5, 0.01, stop_epoch=args.num_epochs-50)
     
+    # learning rate schedule for total loss
+    lr_sched = stepLR_schedule(args.lr, args.num_epochs, step_size=50, gamma=0.5)
+    
     # plot each schedule
     fig, axs = plt.subplots(2, 3, figsize=(12, 5), sharex='col')
     #with plt.style.context(['nature']):
+
+    plot_prog_and_schedule(axs[0, 0], training_prog['total'].mean(0), lr_sched,
+                            title="Total Loss", prog_label=r"$L_{total}$", sched_label=r"$\eta$")
         
-    plot_prog_and_schedule(axs[0, 0], training_prog['spatial_error'].mean(0), lambda_spatial_sched,
-                            title="Layer 1 Error", prog_label=r"$L_{pred}^{(1)}$", sched_label=r"$\lambda_2$")
+    plot_prog_and_schedule(axs[0, 1], training_prog['spatial_error'].mean(0), lambda_spatial_sched,
+                            title="Layer 1 Error", prog_label=r"$L_{pred}^{(1)}$", sched_label=r"$\lambda_1$")
     
-    plot_prog_and_schedule(axs[0, 1], training_prog['temporal_error'].mean(0), lambda_temporal_sched,
+    plot_prog_and_schedule(axs[0, 2], training_prog['temporal_error'].mean(0), lambda_temporal_sched,
                             title='Layer 2 Error', prog_label=r"$L_{pred}^{(2)}$", sched_label=r"$\lambda_2$")
     
-    plot_prog_and_schedule(axs[0, 2], training_prog['energy'].mean(0), lambda_energy_sched,
+    plot_prog_and_schedule(axs[1, 0], training_prog['energy'].mean(0), lambda_energy_sched,
                             title="Energy Loss", prog_label=r"$L_{energy}$", sched_label=r"$\lambda_{energy}$")
     
-    plot_prog_and_schedule(axs[1, 0], training_prog['value_loss'].mean(0), lambda_rew_sched,
+    plot_prog_and_schedule(axs[1, 1], training_prog['value_loss'].mean(0), lambda_rew_sched,
                             title="Reward Prediction Error", prog_label=r"$L_{action}$", sched_label=r"$\lambda_{action}$", xlabel='Epoch')
     
-    plot_prog_and_schedule(axs[1, 1], training_prog['episode_rewards'].mean(0), epsilon_sched,
+    plot_prog_and_schedule(axs[1, 2], training_prog['episode_rewards'].mean(0), epsilon_sched,
                             title="Reward", prog_label="Mean Reward", sched_label=r"$\epsilon$", xlabel='Epoch')
     
-    plot_dprimes(axs[1, 2], np.arange(args.num_epochs, step=5.), training_prog['dprime'].mean(0), training_prog['dprime_novel'].mean(0),
-                 title="Behavioral Performance", xlabel='Epoch')
+    #plot_dprimes(axs[1, 2], np.arange(args.num_epochs, step=5.), training_prog['dprime'].mean(0), training_prog['dprime_novel'].mean(0),
+    #             title="Behavioral Performance", xlabel='Epoch')
     
     fig.tight_layout()
 
@@ -335,3 +353,67 @@ def plot_training_progress(args, training_prog, save_fig=False):
         fig.savefig("./figures/training_progress.pdf", dpi=800)
     
     return fig
+
+def plot_example_reward_sequence(ax, args, title=None):
+
+    # construct timestamps for an example sequence
+    before_onsets = [args.blank_ts // 2, args.blank_ts//2 + args.img_ts + args.blank_ts]
+    before_offsets = [i+args.img_ts for i in before_onsets]
+    after_onsets = [before_offsets[-1] + args.blank_ts, before_offsets[-1] + 2 * args.blank_ts + args.img_ts]
+    after_offsets = [i+args.img_ts for i in after_onsets]
+    example_ts = [{
+        "before": (before_onsets, before_offsets),
+        "after": (after_onsets, after_offsets)
+    }]
+    seq_len = after_offsets[-1] + args.blank_ts//2
+
+    # construct a reward sequence
+    example_r = get_reward_sequence(1, seq_len, example_ts, reward_window=args.img_ts+2, reward_amount=10.0, action_cost=2.0)
+    example_r = example_r[0].numpy()
+
+    # plot repeat and change images
+    pre_clr = sns.color_palette('pastel')[-3]
+    change_clr = sns.color_palette('husl', 9)[-2]
+    for bf_on, bf_off in zip(*example_ts[0]['before']):
+        ax.axvspan(bf_on, bf_off, color=pre_clr, alpha=0.25)        
+
+    for af_on, af_off in zip(*example_ts[0]['after']):
+        ax.axvspan(af_on, af_off, color=change_clr, alpha=0.2)
+    
+    # plot reward sequence
+    lick_color = "tab:blue"
+    nolick_color = "tab:red"
+    ax.plot(example_r, color=lick_color, linewidth=3.0, label="Lick Action")
+    ax.plot(np.zeros_like(example_r), color=nolick_color, linewidth=3.0, label="No Lick Action")
+
+    ax.set_ylabel("Reward Value", fontsize=16)
+    ax.tick_params(axis='y', labelsize=14)
+    ax.tick_params(axis='x', labelsize=14)
+
+    ax.set_xlabel("Time", fontsize=16)
+        
+    if title is not None:
+        ax.set_title(title, fontsize=20)
+    
+    ax.legend(loc='upper left', frameon=False)
+
+    return ax
+
+def plot_confidence_intervals(ax, familiar_responses, novel_responses, alpha=0.05):
+
+    fam_mean, fam_err = compute_population_stats(familiar_responses, alpha=alpha)
+    nov_mean, nov_err = compute_population_stats(novel_responses, alpha=alpha)
+    
+    # Create a list of colors for the boxplots based on the number of features you have
+    colors = ['darkorange', 'darkblue']
+
+    # error bar plot
+    ax.errorbar([1], [fam_mean], yerr=fam_err, fmt='o', markersize=8, color=colors[0],
+                 ecolor=colors[0], capsize=0, elinewidth=2)
+    
+    ax.errorbar([2], [nov_mean], yerr=nov_err, fmt='o', markersize=8, color=colors[1],
+                 ecolor=colors[1], capsize=0, elinewidth=2)
+
+    plt.xticks(np.arange(1,3,1), ['Familiar', 'Novel'])  # Set text labels.
+    plt.ylabel('Average response')
+    plt.xlim([0.5, 2.5])

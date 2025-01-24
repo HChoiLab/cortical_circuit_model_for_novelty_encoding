@@ -98,9 +98,9 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         self.apply(init_weights)
         
         # specific initialization constraints
-        nn.init.normal_(self.I_to_theta.weight, mean=1e-2, std=1e-3)
-        nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
-        nn.init.normal_(self.theta_to_z.weight, mean=0.2, std=1e-2)
+        nn.init.normal_(self.I_to_theta.weight, mean=1e-1, std=1e-2)
+        #nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
+        nn.init.normal_(self.theta_to_z.weight, mean=0.5, std=1e-1)
         nn.init.normal_(self.prior_sigma.bias, mean=3.0, std=0.1)
     
     def compute_reward_loss(self, R, actions, values):
@@ -125,42 +125,35 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         # get prior from previous higher area state
         mu_p = nn.functional.relu(self.prior_mu(responses_m_1['h2']))
         
-        sigmap_h = self.prior_sigma(responses_m_1['h']) 
-        sigma_p = 0.2 * responses_m_1['sigma_p'] + 0.7 * torch.relu(sigmap_h)
+        sigmap_h = self.prior_sigma(responses_m_1['h'])
+        sigma_p = 0.2 * responses_m_1['sigma_p'] + 0.8 * torch.relu(sigmap_h)
             
         # compute thetas
         vip_inh = self.vip_to_theta(sigma_p)
-        theta_ff = 0.4 * responses_m_1['theta_ff'] + torch.exp(-50 * responses_m_1['theta_ff'].abs()) * self.I_to_theta(I_t)
+        theta_ff_input = self.I_to_theta(I_t)
+        theta_ff_noise = torch.randn_like(theta_ff_input) * theta_ff_input.mean(-1, keepdim=True)
+        theta_ff = 0.4 * responses_m_1['theta_ff'] + torch.exp(-100 * responses_m_1['theta_ff'].abs()) * (theta_ff_input + theta_ff_noise)
         theta_ff = torch.tanh(theta_ff)**2
-        theta_h = theta_ff * torch.exp(-.5 * vip_inh**2)
-        theta = 0.1 * responses_m_1['theta'] + theta_h
+        theta_h = 0.5 * theta_ff * torch.exp(-.5 * vip_inh**2)
+        theta = theta_h
         
         # encode input to the posterior parameters
-        mu_q = torch.relu(self.posterior_mu(I_t))
+        mu_q = torch.relu(torch.tanh(0.1 * self.posterior_mu(I_t)))
         sigma_q = torch.relu(self.posterior_sigma(I_t))
+        actual_sq = torch.tanh(0.01 * sigma_q)
 
         # compute pyramidal activities (inferred z's)
-        raw_z = mu_q + torch.randn_like(sigma_q) * (torch.sigmoid(0.1 * sigma_q) - 0.5)
-        raw_z = torch.relu(torch.tanh(0.2 * raw_z))
+        raw_z = mu_q + torch.randn_like(sigma_q) * actual_sq
+        #raw_z = torch.relu(torch.tanh(0.1 * raw_z))
 
         # inhibitory input from SST to excitatory activity
         sst_inhibition = 0.8 * responses_m_1['sst_inh'] + self.theta_to_z(theta)
         z = nn.functional.relu(raw_z - sst_inhibition)
-        z_energy = nn.functional.relu(raw_z.detach() - sst_inhibition)
-        
-        # compute reconstruction (top down prediction from the representation layer)
-        I_hat = torch.sigmoid(self.reconstruction(z) - 2.0)
-        
-        # compute temporal prediction (top down prediction from the higher layer)
-        z_hat = mu_p + torch.randn_like(mu_p) * sigma_p
-        
-         # evolve higher area activities
+        #z_energy = nn.functional.relu(raw_z.detach() - sst_inhibition)
+
+        # evolve higher area activities
         h = torch.relu(self.z_to_h(z) + self.h_to_h(responses_m_1['h']))
         h2 = torch.relu(self.z_to_h2(z) + self.h2_to_h2(responses_m_1['h2']))
-
-        # error population activities
-        layer_1_error = (I_t - I_hat) ** 2
-        layer_2_error = (z - z_hat) ** 2
 
         # decision making if we are doing action
         if not self.perception_only:
@@ -177,17 +170,27 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             # predicted value of action
             action_value = action * lick_value + (1 - action) * nolick_value
             
-            rl_gain =  0.2 * responses_m_1['rl_gain'] + 3. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()
+            rl_gain =  0.2 * responses_m_1['rl_gain'] + 5. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()
             rl_gain = torch.relu(rl_gain)
             
             # Update VIP activities based on RL gain modulation
-            sigmap_h = sigmap_h + rl_gain
-            sigma_p = 0.2 * responses_m_1['sigma_p'] + 0.7 * torch.relu(sigmap_h)
+            sigmap_h = sigmap_h + rl_gain * torch.sign(z.mean(-1, keepdim=True)).detach()
+            sigma_p = 0.2 * responses_m_1['sigma_p'] + 0.8 * torch.relu(sigmap_h)
+        
+        # compute reconstruction (top down prediction from the representation layer)
+        I_hat = torch.sigmoid(self.reconstruction(z))
+        
+        # compute temporal prediction (top down prediction from the higher layer)
+        z_hat = mu_p + torch.randn_like(mu_p) * sigma_p
+
+        # error population activities
+        layer_1_error = (I_t - I_hat) ** 2
+        layer_2_error = (z - z_hat) ** 2
 
         # compute losses
         spatial_error_loss = layer_1_error.mean()
         temporal_error_loss = layer_2_error.mean()
-        energy_loss = torch.abs(z_energy).mean()
+        energy_loss = torch.abs(z).mean()
 
         # put together all responses
         responses_t = {

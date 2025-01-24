@@ -24,8 +24,8 @@ def fetch_sequences(args, seed=None):
     test_images = all_images[indcs[args.num_train:]]
     
     # normalize images
-    img_mean = np.mean(all_images) #, axis=0, keepdims=True)
-    img_std = np.std(all_images) #, axis=0, keepdims=True)
+    img_mean = np.mean(all_images, axis=0, keepdims=True)
+    img_std = np.std(all_images, axis=0, keepdims=True)
     
     train_images = (train_images - img_mean) / img_std
     test_images = (test_images - img_mean) / img_std
@@ -70,6 +70,6 @@ def get_reward_sequence(batch_size, seq_len, seq_ts,
     for s in range(len(reward_seq)):
         
         change_time = seq_ts[s]['after'][0][0]
-        reward_seq[s, change_time:change_time+reward_window] = reward_amount - action_cost
+        reward_seq[s, change_time+reward_window[0]:change_time+reward_window[1]] = reward_amount - action_cost
     
     return reward_seq

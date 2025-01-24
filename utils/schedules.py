@@ -41,3 +41,11 @@ def step_schedule(n_epochs, epoch_thresh, step_from=0.0, step_to=1.0):
     L = step_from * np.ones(n_epochs)
     L[int(epoch_thresh - 1):] = step_to
     return L
+
+def stepLR_schedule(starting_lr, n_epochs, step_size=50, gamma=0.5):
+    
+    lr = []
+    lr_values = [starting_lr * (gamma**i) for i in range(n_epochs // step_size)]
+    for v in lr_values:
+        lr += [v] * step_size
+    return np.array(lr)

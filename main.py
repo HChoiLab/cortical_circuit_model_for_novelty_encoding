@@ -30,7 +30,7 @@ def parse_args():
 
     """ model parameters """
     parser.add_argument("--latent_dim", type=float, default=64)
-    parser.add_argument("--h_dim", type=int, default=64)
+    parser.add_argument("--h_dim", type=int, default=128)
     parser.add_argument("--lambda_spatial", type=float, default=1.0)
     parser.add_argument("--lambda_temporal", type=float, default=1.0)
     parser.add_argument("--lambda_energy", type=float, default=1.0)
@@ -49,7 +49,7 @@ def parse_args():
     # when to start optimizing different objective function
     parser.add_argument("--temporal_start", type=int, default=50)
     parser.add_argument("--energy_start", type=int, default=75)
-    parser.add_argument("--value_start", type=int, default=50)
+    parser.add_argument("--value_start", type=int, default=10)
 
     return parser.parse_known_args()[0]
 
@@ -80,7 +80,7 @@ def main(args):
     train_om_seqs, train_om_ts, train_oms, _, _, _ = fetch_sequences(args, seed)
 
     # create reward tensor for train and test sequences
-    rew_window = args.img_ts + 2
+    rew_window = (0, args.img_ts + args.blank_ts)
     R_train = get_reward_sequence(*train_seqs.shape[:2], train_ts, reward_window=rew_window, reward_amount=10.0, action_cost=2.0)
     R_test = get_reward_sequence(*test_seqs.shape[:2], test_ts, reward_window=rew_window, reward_amount=10.0, action_cost=2.0)
     R_train_om = get_reward_sequence(*train_seqs.shape[:2], train_om_ts, reward_window=rew_window, reward_amount=10.0, action_cost=2.0)
@@ -107,16 +107,16 @@ def main(args):
     ).to(args.device)
 
     # create lambda schedules
-    lambda_temporal_sched = ramp_schedule(args.num_epochs, args.temporal_start, stop=args.lambda_temporal, stop_epoch=args.num_epochs-50)
-    lambda_energy_sched = ramp_schedule(args.num_epochs, args.energy_start, stop=args.lambda_energy, stop_epoch=args.num_epochs-50)
-    lambda_rew_sched = ramp_schedule(args.num_epochs, args.value_start, stop=args.lambda_reward, stop_epoch=args.num_epochs-50)
+    lambda_temporal_sched = ramp_schedule(args.num_epochs, args.temporal_start, stop=args.lambda_temporal, stop_epoch=args.num_epochs)
+    lambda_energy_sched = ramp_schedule(args.num_epochs, args.energy_start, stop=args.lambda_energy, stop_epoch=args.num_epochs)
+    lambda_rew_sched = ramp_schedule(args.num_epochs, args.value_start, stop=args.lambda_reward, stop_epoch=args.num_epochs)
 
     # epsilon schedule for greedy exploration
-    epsilon_sched = decreasing_ramp_schedule(args.num_epochs, args.value_start, 0.5, 0.01, stop_epoch=args.num_epochs-50)
+    epsilon_sched = decreasing_ramp_schedule(args.num_epochs, args.value_start, 0.5, 0.01, stop_epoch=args.num_epochs-10)
     
     # create optimizer and learning rate schedule
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    lr_sched = torch.optim.lr_scheduler.StepLR(opt, step_size=50, gamma=0.5)
+    lr_sched = torch.optim.lr_scheduler.StepLR(opt, step_size=100, gamma=0.5)
 
     # train
     calc_dprime = args.calculate_dprime

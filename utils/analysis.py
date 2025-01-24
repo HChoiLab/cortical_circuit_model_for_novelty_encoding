@@ -115,13 +115,13 @@ def compute_dprime(ts, actions, response_window):
 
         # find false alarms during catch trials
         for tr in s['before'][0] + s['after'][0][1:]:
-            tr_actions = actions[si][tr:tr+response_window]
+            tr_actions = actions[si][tr+response_window[0]:tr+response_window[1]]
             if torch.any(tr_actions).item():
                 fas += 1
         
         # find hits during go trial
         go_ts = s['after'][0][0]
-        go_actions = actions[si][go_ts:go_ts+response_window]
+        go_actions = actions[si][go_ts+response_window[0]:go_ts+response_window[1]]
         if torch.any(go_actions).item():
             hits += 1
     
@@ -134,3 +134,19 @@ def compute_dprime(ts, actions, response_window):
     dprime = stats.norm.ppf(hit_rate) - stats.norm.ppf(fa_rate)
 
     return dprime
+
+def compute_population_stats(responses, alpha=0.05):
+
+    # Sample size, mean, and standard error of the mean
+    n = len(responses)
+    mean_val = np.mean(responses)
+    std_val = np.std(responses, ddof=1)
+    sem = std_val / np.sqrt(n)
+    
+    # Two-tailed t-value for CI = 100 * (1 - alpha) %
+    # degrees of freedom = n-1
+    t_val = stats.t.ppf(1 - alpha/2, df=n-1)
+    
+    # Confidence interval
+    error_margin = t_val * sem
+    return mean_val, error_margin
