@@ -6,7 +6,7 @@ from utils.analysis import process_outputs
 import numpy as np
 import argparse
 
-SCRATCH = "/storage/scratch1/2/asharafeldin3"
+SCRATCH = "/storage/ice1/7/2/asharafeldin3"
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -39,7 +39,7 @@ def train_model(seed, gpu_id, action=False):
     
     if not action:
         args.perception_only = True
-        args.lambda_energy = 0.5
+        args.lambda_energy = 1.0
         args.lambda_temporal = 1.0
         args.lambda_spatial = 1.0
         args.lambda_reward = 0.0
@@ -47,7 +47,7 @@ def train_model(seed, gpu_id, action=False):
         args.perception_only = False
         args.lambda_reward = 0.1
         args.lambda_temporal = 1.0
-        args.lambda_energy = 0.5
+        args.lambda_energy = 1.0
         args.lambda_spatial = 1.0
     
     # train

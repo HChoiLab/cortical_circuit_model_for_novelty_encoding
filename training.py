@@ -163,6 +163,13 @@ def train(model, optimizer, dataloader,
         if dprime_epoch:
             last_dprime = avg_losses['dprime']
             dprime_familiar.append(last_dprime)
+            
+            # compute d_prime for the novel sequences every 5 epochs
+            with torch.no_grad():
+                test_x, test_r, test_ts = test_sequences
+                test_responses, _ = model.forward_sequence(test_x, test_r, epsilon=0.1 if epsilon_sched is None else epsilon_sched[epoch])
+                test_dprime = compute_dprime(test_ts, test_responses['action'], response_window=response_window)
+                dprime_novel.append(test_dprime)
         
         training_progress.append(avg_losses)
                 
@@ -178,14 +185,6 @@ def train(model, optimizer, dataloader,
                             rewards=avg_losses['episode_rewards'],
                             value=avg_losses['value_loss'],
                             dprime=last_dprime)
-            
-        # compute d_prime for the novel sequences every 5 epochs
-        if dprime_epoch:
-            with torch.no_grad():
-                test_x, test_r, test_ts = test_sequences
-                test_responses, _ = model.forward_sequence(test_x, test_r, epsilon=0.1 if epsilon_sched is None else epsilon_sched[epoch])
-                test_dprime = compute_dprime(test_ts, test_responses['action'], response_window=response_window)
-                dprime_novel.append(test_dprime)
             
     training_progress = {
             k: np.stack([d[k] for d in training_progress]) for k in training_progress[0].keys()

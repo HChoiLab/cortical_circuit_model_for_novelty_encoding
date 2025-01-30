@@ -38,7 +38,7 @@ target_node="${nodes[$node_rank]}"
 # Define the training command
 train_cmd_no_action="
 module load anaconda3/2022.05
-conda activate ./envs/projects
+conda activate projects
 cd $HOME/code/cortical_circuit_model_for_novelty_encoding
 rm -rf ~/.local/share/Trash/*
 python distributed_training.py --num_runs $num_runs
@@ -46,7 +46,7 @@ python distributed_training.py --num_runs $num_runs
 
 train_cmd_action="
 module load anaconda3/2022.05
-conda activate ./envs/projects
+conda activate projects
 cd $HOME/code/cortical_circuit_model_for_novelty_encoding
 rm -rf ~/.local/share/Trash/*
 python distributed_training.py --num_runs $num_runs --action
