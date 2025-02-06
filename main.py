@@ -115,7 +115,7 @@ def main(args):
     epsilon_sched = decreasing_ramp_schedule(args.num_epochs, args.value_start, 0.5, 0.01, stop_epoch=args.num_epochs-10)
     
     # create optimizer and learning rate schedule
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
+    opt = model.get_optimizer(lr=args.lr)
     lr_sched = torch.optim.lr_scheduler.StepLR(opt, step_size=100, gamma=0.5)
 
     # train

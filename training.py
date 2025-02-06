@@ -63,6 +63,20 @@ def training_epoch(model, optimizer, dataloader, epoch,
     lambda_reward = None if lambda_reward_sched is None else lambda_reward_sched[epoch]
     epsilon = 0.1 if epsilon_sched is None else epsilon_sched[epoch]
     
+    # EXPERIMENTAL 
+    # if energy is being optimized, fix the FF connections to EXC neurons
+    
+    if lambda_energy > 0:
+        for param in model.posterior_mu.parameters():
+            param.requires_grad = False
+        for param in model.z_to_h.parameters():
+            param.requires_grad = False
+        for param in model.z_to_h2.parameters():
+            param.requires_grad = False
+        for param in model.posterior_sigma.parameters():
+            param.requires_grad = False
+
+    
     if progress_bar:
         pbar = tqdm.tqdm(dataloader, unit='batch')
         pbar.set_description(f"Epoch {epoch}")
@@ -84,10 +98,20 @@ def training_epoch(model, optimizer, dataloader, epoch,
                                                    lambda_reward=lambda_reward,
                                                    epsilon=epsilon)
         total_loss = losses['total']
+        energy_loss = lambda_energy * losses['energy']
         
         # step the optimizer 
         optimizer.zero_grad()
-        total_loss.backward()        
+        
+        # calculate energy loss gradients first
+        #energy_loss.backward(retain_graph=True)
+        
+        # zero out energy loss gradients for FF connections to EXC neurons
+        #model.posterior_mu.weight.grad.zero_()
+        #model.posterior_sigma.weight.grad.zero_()
+        
+        # now calculate gradients from other losses and step
+        total_loss.backward()
         optimizer.step()
 
         dp = torch.nan

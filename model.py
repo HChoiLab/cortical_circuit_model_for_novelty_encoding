@@ -57,7 +57,10 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         
         # connections from higher area
         self.prior_mu = nn.Linear(higher_state_dim, latent_dim, bias=False)                # encodes prior distribution mean (represented by an SST subpop)
-        self.prior_sigma = nn.Linear(higher_state_dim, latent_dim, bias=True)              # encodes prior variance (represented by VIP neurons)
+        self.prior_sigma = nn.Linear(higher_state_dim, latent_dim, bias=False)              # encodes prior variance (represented by VIP neurons)
+        self.vip_bias = nn.Parameter(
+            0.8 + torch.randn((1, latent_dim)) * 0.3,
+            requires_grad=False)
         
         # connections involved in the computation of theta
         self.theta_dim = latent_dim
@@ -73,10 +76,6 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         self.value_dim = higher_state_dim
         self.h_to_value = nn.Linear(higher_state_dim, self.value_dim)
         self.value_to_value = nn.Linear(self.value_dim, self.value_dim)
-        
-        # feedforward connections to SST neurons are not learnable
-        for param in self.I_to_theta.parameters():
-            param.requires_grad = False
             
         self.initialize_params()
         
@@ -85,10 +84,14 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         # multiply them by -1 when they're used for computation 
         nn.utils.parametrize.register_parametrization(self.vip_to_theta, 'weight', Positive())
         nn.utils.parametrize.register_parametrization(self.theta_to_z, 'weight', Positive())
-        nn.utils.parametrize.register_parametrization(self.prior_sigma, 'bias', Positive())
+        #nn.utils.parametrize.register_parametrization(self.prior_sigma, 'bias', Positive())
         
         # this makes sure the recurrent connections between the first higher area are stable
         nn.utils.parametrize.register_parametrization(self.h_to_h, 'weight', StableRecurrent())
+        
+        # feedforward connections to SST neurons are not learnable
+        for param in self.I_to_theta.parameters():
+            param.requires_grad = False
     
     def initialize_params(self):
         def init_weights(m):
@@ -98,11 +101,10 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         self.apply(init_weights)
         
         # specific initialization constraints
-        #nn.init.normal_(self.I_to_theta.weight, mean=0, std=1e-3)
+        nn.init.normal_(self.I_to_theta.weight, mean=1., std=1e-3)
         #nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
-        nn.init.normal_(self.theta_to_z.weight, mean=0.3, std=1e-2)
-        nn.init.normal_(self.prior_sigma.bias, mean=2.0, std=0.1)
-        #nn.init.normal_(self.z_to_h2.weight, mean=1e-1, std=1e-2)
+        nn.init.normal_(self.theta_to_z.weight, mean=0.1, std=1e-3)
+        #nn.init.normal_(self.prior_sigma.bias, mean=1.0, std=0.01)                 # 1.0
     
     def compute_reward_loss(self, R, actions, values):
         
@@ -124,9 +126,9 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
     def forward(self, I_t, responses_m_1, epsilon=0.1):      
         
         # get prior from previous higher area state
-        mu_p = nn.functional.relu(self.prior_mu(responses_m_1['h2']))
+        mu_p = torch.relu(self.prior_mu(responses_m_1['h2']))
         
-        sigmap_h = self.prior_sigma(responses_m_1['h'])
+        sigmap_h = self.prior_sigma(responses_m_1['h']) + self.vip_bias.expand_as(responses_m_1['sigmap_h'])
         sigma_p = 0.2 * responses_m_1['sigma_p'] + 0.8 * torch.relu(sigmap_h)
             
         # compute thetas
@@ -135,13 +137,13 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         #theta_ff_noise = torch.randn_like(theta_ff_input) * torch.abs(theta_ff_input.mean(-1, keepdim=True))
         theta_ff = 0.3 * responses_m_1['theta_ff'] + torch.exp(-1e3 * responses_m_1['theta_ff'].abs()) * theta_ff_input
         theta_ff = torch.tanh(theta_ff)**2
-        theta_h = theta_ff * torch.exp(-0.5 * vip_inh**2)
+        theta_h = 0.5 * theta_ff * torch.exp(-2. * vip_inh)         # 0.2
         theta = theta_h
         
         # encode input to the posterior parameters
-        mu_q = torch.relu(torch.tanh(0.1 * self.posterior_mu(I_t)))
+        mu_q = torch.relu(torch.tanh(0.05 * self.posterior_mu(I_t)))       # 0.01
         sigma_q = torch.relu(self.posterior_sigma(I_t))
-        actual_sq = torch.tanh(0.01 * sigma_q)
+        actual_sq = 0.05 * sigma_q #torch.tanh(0.05 * sigma_q)
 
         # compute pyramidal activities (inferred z's)
         raw_z = mu_q + torch.randn_like(sigma_q) * actual_sq
@@ -171,7 +173,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             # predicted value of action
             action_value = action * lick_value + (1 - action) * nolick_value
             
-            rl_gain =  0.2 * responses_m_1['rl_gain'] + 10. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()
+            rl_gain =  0.2 * responses_m_1['rl_gain'] + 10. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()      # 7.0
             rl_gain = torch.relu(rl_gain)
             
             # Update VIP activities based on RL gain modulation
@@ -326,4 +328,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         }
 
         return responses_0
+    
+    def get_optimizer(self, lr):
         
+        return torch.optim.Adam(self.parameters(), lr=lr)
