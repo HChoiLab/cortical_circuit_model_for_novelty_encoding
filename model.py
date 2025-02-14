@@ -56,11 +56,11 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         self.z_to_h2 = nn.Linear(latent_dim, higher_state_dim, bias=False)
         
         # connections from higher area
-        self.prior_mu = nn.Linear(higher_state_dim, latent_dim, bias=False)                # encodes prior distribution mean (represented by an SST subpop)
+        self.prior_mu = nn.Linear(higher_state_dim, latent_dim, bias=False)                 # encodes prior distribution mean (SST subpop)
         self.prior_sigma = nn.Linear(higher_state_dim, latent_dim, bias=False)              # encodes prior variance (represented by VIP neurons)
         self.vip_bias = nn.Parameter(
             0.8 + torch.randn((1, latent_dim)) * 0.3,
-            requires_grad=False)
+            requires_grad=False)         # 0.7, 0.2
         
         # connections involved in the computation of theta
         self.theta_dim = latent_dim
@@ -103,8 +103,8 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         # specific initialization constraints
         nn.init.normal_(self.I_to_theta.weight, mean=1., std=1e-3)
         #nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
-        nn.init.normal_(self.theta_to_z.weight, mean=0.1, std=1e-3)
-        #nn.init.normal_(self.prior_sigma.bias, mean=1.0, std=0.01)                 # 1.0
+        nn.init.normal_(self.theta_to_z.weight, mean=0.1, std=1e-3)            # 0.1
+        #nn.init.normal_(self.prior_sigma.weight, mean=-0.8, std=1e-2)          # TODO       
     
     def compute_reward_loss(self, R, actions, values):
         
@@ -137,21 +137,21 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         #theta_ff_noise = torch.randn_like(theta_ff_input) * torch.abs(theta_ff_input.mean(-1, keepdim=True))
         theta_ff = 0.3 * responses_m_1['theta_ff'] + torch.exp(-1e3 * responses_m_1['theta_ff'].abs()) * theta_ff_input
         theta_ff = torch.tanh(theta_ff)**2
-        theta_h = 0.5 * theta_ff * torch.exp(-2. * vip_inh)         # 0.2
+        theta_h = 0.4 * theta_ff * torch.exp(-2. * vip_inh)       # 0.3, 4.
         theta = theta_h
         
         # encode input to the posterior parameters
-        mu_q = torch.relu(torch.tanh(0.05 * self.posterior_mu(I_t)))       # 0.01
+        mu_q = torch.relu(torch.tanh(0.05 * self.posterior_mu(I_t)))        # 0.03
         sigma_q = torch.relu(self.posterior_sigma(I_t))
-        actual_sq = 0.05 * sigma_q #torch.tanh(0.05 * sigma_q)
+        actual_sq = 0.05 * sigma_q #torch.tanh(0.05 * sigma_q)              # 0.03
 
         # compute pyramidal activities (inferred z's)
         raw_z = mu_q + torch.randn_like(sigma_q) * actual_sq
         #raw_z = torch.relu(torch.tanh(0.1 * raw_z))
 
         # inhibitory input from SST to excitatory activity
-        sst_inhibition = 0.9 * responses_m_1['sst_inh'] + self.theta_to_z(theta)
-        z = nn.functional.relu(raw_z - sst_inhibition)
+        sst_inhibition = 0.8 * responses_m_1['sst_inh'] + 2. * self.theta_to_z(theta)        # 0.8, 2.
+        z = torch.relu(raw_z - sst_inhibition)
         #z_energy = nn.functional.relu(raw_z.detach() - sst_inhibition)
 
         # evolve higher area activities
@@ -173,7 +173,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             # predicted value of action
             action_value = action * lick_value + (1 - action) * nolick_value
             
-            rl_gain =  0.2 * responses_m_1['rl_gain'] + 10. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()      # 7.0
+            rl_gain =  0.2 * responses_m_1['rl_gain'] + 14. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()    # 15
             rl_gain = torch.relu(rl_gain)
             
             # Update VIP activities based on RL gain modulation
@@ -321,7 +321,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             "sst_inh": torch.zeros((batch_size, self.latent_dim)).to(device),
             "z_h": torch.zeros((batch_size, self.latent_dim)).to(device),
             "z": torch.zeros((batch_size, self.latent_dim)).to(device),
-            "h": torch.zeros((batch_size, self.higher_state_dim)).to(device),
+            "h": torch.ones((batch_size, self.higher_state_dim)).to(device),
             "h2": torch.zeros((batch_size, self.higher_state_dim)).to(device),
             "value": torch.zeros((batch_size, self.value_dim)).to(device),
             "rl_gain": torch.zeros((batch_size, 1)).to(device)

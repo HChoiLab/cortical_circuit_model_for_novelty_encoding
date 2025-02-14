@@ -47,7 +47,7 @@ class SequenceDataset(Dataset):
         return output
 
 
-# training functions
+# ------------------------------- Training functions for the predictive coding model -------------------------------------- #
 def training_epoch(model, optimizer, dataloader, epoch,
                    lambda_temporal_sched=None,
                    lambda_energy_sched=None,
@@ -69,12 +69,14 @@ def training_epoch(model, optimizer, dataloader, epoch,
     if lambda_energy > 0:
         for param in model.posterior_mu.parameters():
             param.requires_grad = False
-        for param in model.z_to_h.parameters():
-            param.requires_grad = False
-        for param in model.z_to_h2.parameters():
-            param.requires_grad = False
         for param in model.posterior_sigma.parameters():
             param.requires_grad = False
+            
+        if epoch > 35:
+            for param in model.z_to_h.parameters():
+                param.requires_grad = False
+            for param in model.z_to_h2.parameters():
+                param.requires_grad = False
 
     
     if progress_bar:
@@ -218,4 +220,57 @@ def train(model, optimizer, dataloader,
     training_progress['dprime_novel'] = np.array(dprime_novel)
     training_progress['lr'] = np.array(learning_rates)
 
+    return training_progress
+
+# ------------------------------- Training functions for the adaptaion model -------------------------------------- #
+def adaptation_model_training_epoch(model, dataloader, epoch, optimizer=None, device='cuda', progress_bar=True):
+
+    if progress_bar:
+        pbar = tqdm.tqdm(dataloader, unit='batch')
+        pbar.set_description(f"Epoch {epoch}")
+    else:
+        pbar = dataloader
+    
+    avg_loss = 0.
+    for _, (Y, _, _) in enumerate(pbar):
+        Y = Y.to(device)
+        
+        output = model.forward_sequence(Y)
+        
+        if optimizer is not None:
+            optimizer.zero_grad()
+            output['MSE'].backward()
+            optimizer.step()
+            
+            if progress_bar:
+                pbar.set_postfix(mse=output['MSE'].item())
+            
+            avg_loss += (output['MSE'] / len(pbar))
+    
+    return avg_loss
+
+def train_adaptation_model(model, dataloader, optimizer=None, num_epochs=10, device='cuda', progress_mode='batch'):
+
+    if progress_mode == 'none':
+        pbar = range(num_epochs)
+        epoch_bar = False
+    elif progress_mode == 'batch':
+        pbar = range(num_epochs)
+        epoch_bar = True
+    elif progress_mode == 'epoch':
+        pbar = tqdm.tqdm(range(num_epochs), unit='epoch')
+        epoch_bar = False
+    else:
+        raise
+
+    training_progress = []
+    for epoch in pbar:
+        
+        avg_loss = adaptation_model_training_epoch(model, dataloader, epoch, optimizer, device, progress_bar=epoch_bar)
+
+        training_progress.append(avg_loss)
+
+        if progress_mode == 'epoch':
+            pbar.set_postfix(mse=avg_loss)
+        
     return training_progress

@@ -9,13 +9,24 @@ from utils.schedules import ramp_schedule, decreasing_ramp_schedule, stepLR_sche
 from task import get_reward_sequence
 from utils.analysis import compute_population_stats
 
+# GLOBAL COLOR PARAMETERS
+PRE_CLR = sns.color_palette('pastel')[-3]
+CHANGE_CLR = sns.color_palette('husl', 9)[-2]
+
+FAM_CLR = 'darkorange'
+NOV_CLR = 'darkblue'
+
+VIP_CLR = 'royalblue'
+SST_CLR = 'forestgreen'
+EXC_CLR = 'firebrick'
+
 
 def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mode='change', labels=None, clrs=None, sem=True, normalize=True):
     
     if labels is None:
         labels = ["Familiar", "Novel"]
     if clrs is None:
-        clrs = ['darkorange', 'darkblue']
+        clrs = [FAM_CLR, NOV_CLR]
     
     familiar_mean = familiar_responses.mean([0, -1]).detach()
     novel_mean = novel_responses.mean([0, -1]).detach()
@@ -37,10 +48,8 @@ def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mo
     
     # plot image presentations
     if trial_mode == 'change':
-        pre_clr = sns.color_palette('pastel')[-3]
-        change_clr = sns.color_palette('husl', 9)[-2]
-        ax.axvspan(half_blank, half_blank + args.img_ts, color=pre_clr, alpha=0.25, edgecolor="none", linewidth=0, zorder=1)
-        ax.axvspan(half_blank + args.blank_ts + args.img_ts, half_blank + args.blank_ts + 2 * args.img_ts, color=change_clr, alpha=0.2,
+        ax.axvspan(half_blank, half_blank + args.img_ts, color=PRE_CLR, alpha=0.25, edgecolor="none", linewidth=0, zorder=1)
+        ax.axvspan(half_blank + args.blank_ts + args.img_ts, half_blank + args.blank_ts + 2 * args.img_ts, color=CHANGE_CLR, alpha=0.2,
                    edgecolor="none", linewidth=0, zorder=1)
     
     elif trial_mode == 'omission':
@@ -89,19 +98,17 @@ def plot_change_responses(args, ax, responses, label, clr, sem=True):
 def plot_omission_responses(args, ax, responses, label, image_clr, trace_clr, sem=True):
     response_mean = responses.mean([0, -1]).detach()
     response_std = responses.mean(-1).std(0).detach() / np.sqrt(responses.shape[0])
-
-    image_clr = sns.color_palette('pastel')[-3]
     
     # first image
-    ax.axvspan(args.blank_ts // 2, args.blank_ts // 2 + args.img_ts, color=image_clr, alpha=0.05)
+    ax.axvspan(args.blank_ts // 2, args.blank_ts // 2 + args.img_ts, color=PRE_CLR, alpha=0.05)
     
     # omitted image
-    ax.axvline(args.blank_ts + args.blank_ts // 2 + args.img_ts, linestyle="--", color=image_clr, linewidth=2.5)
-    ax.axvline(args.blank_ts + args.blank_ts // 2 + 2 * args.img_ts, linestyle="--", color=image_clr, linewidth=2.5)
+    ax.axvline(args.blank_ts + args.blank_ts // 2 + args.img_ts, linestyle="--", color=PRE_CLR, linewidth=2.5)
+    ax.axvline(args.blank_ts + args.blank_ts // 2 + 2 * args.img_ts, linestyle="--", color=PRE_CLR, linewidth=2.5)
     
     # last image
     ax.axvspan(2 * args.blank_ts + args.blank_ts // 2 + 2 * args.img_ts,
-               2 * args.blank_ts + args.blank_ts // 2 + 3 * args.img_ts, color=image_clr, alpha=0.05)
+               2 * args.blank_ts + args.blank_ts // 2 + 3 * args.img_ts, color=PRE_CLR, alpha=0.05)
     
     ax.plot(response_mean.numpy(), label=label, color=trace_clr, linewidth=3.0)
     if sem:
@@ -168,76 +175,133 @@ def raincloud_plot(ax, familiar_responses, novel_responses):
     plt.ylabel('Average response')
 
 
-def plot_sequence_response(responses, timestamps, seq_idx=0, pop_avg=False, perception_only=True):
+def plot_sequence_responses(
+    responses, timestamps, seq_idx=0, pop_avg=False, perception_only=True
+):
+    """
+    Plots all keys in the `responses` dict on separate subplots.
+    Each subplot is titled with the key name.
 
-    z, vip, sst_theta, sst_mup = responses['z'][seq_idx], responses['sigma_p'][seq_idx], responses['theta'][seq_idx], responses['mu_p'][seq_idx]
+    The function:
+      - Selects the last 4 'before' intervals and the first 4 'after' intervals,
+      - Includes 2 extra timesteps before the earliest 'before' interval,
+      - Uses the final 'before' interval as time=0 (the image change boundary),
+      - Either plots a single random unit if not pop_avg, or the mean across units if pop_avg,
+      - If `perception_only=False`, also plots licks (i.e. `responses["action"]`) on the first subplot.
+    """
 
-    if not perception_only:
-        licks = responses['action']
+    # Responses to show
+    include_responses = ["z", "temp_error", "sigma_p", "mu_p", "theta"]
+    resp_clrs = [EXC_CLR, EXC_CLR, VIP_CLR, SST_CLR, SST_CLR]
 
-    if not pop_avg:
-        z = z[..., randint(z.shape[-1])]
-        vip = vip[..., randint(vip.shape[-1])]
-        sst_theta = sst_theta[..., randint(sst_theta.shape[-1])]
-        sst_mup = sst_mup[..., randint(sst_mup.shape[-1])]
-    
-    else:
-        z, vip, sst_theta, sst_mup = z.mean(-1), vip.mean(-1), sst_theta.mean(-1), sst_mup.mean(-1)
-        
-    _ = plt.figure(figsize=(15, 10))
+    # --- Extract 'before'/'after' intervals for this sequence ---
+    before_on, before_off = timestamps[seq_idx]['before']
+    after_on, after_off   = timestamps[seq_idx]['after']
 
-    with plt.style.context(['nature', 'notebook']):
+    # Keep only 4 intervals from 'before' & 4 intervals from 'after'
+    #before_on, before_off = before_on[-3:], before_off[-3:]
+    #after_on, after_off   = after_on[:3], after_off[:3]
 
-        ax1 = plt.subplot(3, 1, 1)
-        ax2 = plt.subplot(3, 1, 2, sharex=ax1)
-        ax3 = plt.subplot(3, 1, 3, sharex=ax1)
+    # Compute start & end indices:
+    #  - 2 timesteps before the earliest 'before' interval
+    #  - the last 'after_off'
+    start_idx = int(before_on[0]) - 1
+    end_idx   = int(after_off[-1])
 
-        for bf_on, bf_off in zip(*timestamps[seq_idx]['before']):
-            ax1.axvspan(bf_on, bf_off, color="r", alpha=0.09)
-            ax2.axvspan(bf_on, bf_off, color="r", alpha=0.09)
-            ax3.axvspan(bf_on, bf_off, color="r", alpha=0.09)
-            
+    # Define the image change time as the end of the 4th 'before' interval
+    change_time = after_on[0]
 
-        for af_on, af_off in zip(*timestamps[seq_idx]['after']):
-            ax1.axvspan(af_on, af_off, color="b", alpha=0.09)
-            ax2.axvspan(af_on, af_off, color="b", alpha=0.09)
-            ax3.axvspan(af_on, af_off, color="b", alpha=0.09)
+    # Create as many subplots as there are keys
+    fig, axes = plt.subplots(
+        nrows=len(include_responses), ncols=1, figsize=(8, 1.5 * len(include_responses)), sharex=True
+    )
 
-        ax1.plot(z.cpu().detach().numpy(), c='firebrick', label="Excitatory", linewidth=3.5)
-        ax2.plot(vip.cpu().detach().numpy(), c='darkgreen', label="VIP", linewidth=3.5)
-        ax3.plot(sst_theta.cpu().detach().numpy(), c='darkmagenta', label="SST (Theta)", linewidth=3.5)
-        
-        ax3.set_xlabel("Timestep")
-        
-        #ax1.set_title("Excitatory")
-        #ax2.set_title("VIP")
-        #ax3.set_title("SST (Theta)")
-        
-        ax1.tick_params('x', which='both', top=False, labelbottom=False)
-        ax2.tick_params('x', which='both', top=False, labelbottom=False)
-        ax3.tick_params('x', which='both', top=False)
-        ax1.tick_params('y', which='both', right=False)
-        ax2.tick_params('y', which='both', right=False)
-        ax3.tick_params('y', which='both', right=False)
-        
-        ax1.locator_params('x', nbins=4)
-        ax1.locator_params('y', nbins=2)
-        ax2.locator_params('x', nbins=4)
-        ax2.locator_params('y', nbins=2)
-        ax3.locator_params('x', nbins=4)
-        ax3.locator_params('y', nbins=2)
-        
-        ax2.yaxis.set_major_formatter(FormatStrFormatter('%.3f'))
-        ax3.yaxis.set_major_formatter(FormatStrFormatter('%.3f'))
+    # If there's only one key, 'axes' is a single Axes object, convert it to a list
+    if len(include_responses) == 1:
+        axes = [axes]
 
-        # plot licks on the first axis
-        if not perception_only:
-            
-            licks_inds = licks[seq_idx].nonzero()
+    # Build the x-values for plotting (relative to change_time)
+    full_indices = np.arange(start_idx, end_idx)
+    x_vals_rel   = full_indices - change_time  # shift so change_time is zero
 
-            ymin, ymax = ax1.get_ylim()
-            vertical_center = (ymin + ymax) / 2
-            ax1.plot(licks_inds.cpu().numpy(), [vertical_center]*len(licks_inds), 'bo', markersize=12, alpha=0.4)
+    # --- Optionally handle licks ---
+    # We'll plot them on the first axis, if `perception_only=False` and 'action' in responses.
+    plot_licks = (not perception_only) and ('action' in responses)
+    if plot_licks:
+        # Extract licks for this sequence
+        licks = responses['action'][seq_idx]
+        # Slice it
+        licks = licks[start_idx:end_idx]
+        # Find nonzero indices
+        licks_inds = licks.nonzero(as_tuple=True)[0]
+        # CPU + numpy conversion if necessary
+        if hasattr(licks_inds, 'cpu'):
+            licks_inds = licks_inds.cpu().detach().numpy()
+        else:
+            licks_inds = np.asarray(licks_inds)
+        # Corresponding x-values
+        licks_xvals = x_vals_rel[licks_inds]
+
+    # --- Loop through each key and plot ---
+    for i, key in enumerate(include_responses):
+        ax = axes[i]
+        ax.set_title(key)
+
+        # Extract data for this key and sequence
+        data = responses[key][seq_idx]  # shape could be [time] or [time, units]
+
+        # 1) If data is 2D: [time, units], handle pop_avg or single-unit
+        if data.ndim == 2:
+            if pop_avg:
+                # average over last dimension
+                data = data.mean(dim=-1)  # for PyTorch; or data.mean(axis=-1) if NumPy
+            else:
+                # pick a random unit
+                random_unit_idx = randint(0, data.shape[-1] - 1)
+                data = data[..., random_unit_idx]
+
+        # 2) Slice the data [start_idx:end_idx]
+        data = data[start_idx:end_idx]
+
+        # 3) Convert to numpy if it's a PyTorch tensor
+        if hasattr(data, 'cpu'):
+            data_np = data.cpu().detach().numpy()
+        else:
+            data_np = np.asarray(data)
+
+        # 4) Plot the data
+        ax.plot(x_vals_rel, data_np, linewidth=3., color=resp_clrs[i])
+
+        # 5) Shading of intervals
+        for bf_on, bf_off in zip(before_on, before_off):
+            ax.axvspan(bf_on - change_time, bf_off - change_time, color=PRE_CLR, alpha=0.25)
+        for af_on, af_off in zip(after_on, after_off):
+            ax.axvspan(af_on - change_time, af_off - change_time, color=CHANGE_CLR, alpha=0.2)
+
+        # Configure ticks and formatting
+        ax.locator_params(axis='x', nbins=6)
+        ax.locator_params(axis='y', nbins=3)
+        ax.yaxis.set_major_formatter(FormatStrFormatter('%.3f'))
+        if i < len(include_responses) - 1:
+            ax.tick_params(axis='x', which='both', labelbottom=False)
+        else:
+            ax.set_xlabel("Time (relative to image change)")
+
+    # --- Plot licks on the *first axis* (axes[0]) ---
+    if plot_licks:
+        ax0 = axes[0]
+        ymin, ymax = ax0.get_ylim()
+        vertical_center = (ymin + ymax) / 2
+        ax0.plot(
+            licks_xvals,
+            [vertical_center] * len(licks_xvals),
+            'bo',
+            markersize=8,
+            alpha=0.6,
+            label='Licks'
+        )
+
+    plt.tight_layout()
 
 def plot_dprimes(ax, epoch_arr, dprime_fam, dprime_nov, xlabel=None, title=None):
         
@@ -312,7 +376,7 @@ def plot_training_progress(args, training_prog, save_fig=False):
     # create lambda schedules
     lambda_temporal_sched = ramp_schedule(args.num_epochs, args.temporal_start, stop=args.lambda_temporal, stop_epoch=args.num_epochs)
     lambda_energy_sched = ramp_schedule(args.num_epochs, args.energy_start, stop=args.lambda_energy, stop_epoch=args.num_epochs)
-    lambda_rew_sched = ramp_schedule(args.num_epochs, args.value_start, stop=args.lambda_reward, stop_epoch=args.num_epochs)
+    lambda_rew_sched = ramp_schedule(args.num_epochs, args.value_start, start=args.lambda_reward/10., stop=args.lambda_reward, stop_epoch=args.num_epochs)
 
     # epsilon schedule for greedy exploration
     epsilon_sched = decreasing_ramp_schedule(args.num_epochs, args.value_start, 0.5, 0.01, stop_epoch=args.num_epochs-10)
@@ -370,13 +434,11 @@ def plot_example_reward_sequence(ax, args, title=None):
     example_r = example_r[0].numpy()
 
     # plot repeat and change images
-    pre_clr = sns.color_palette('pastel')[-3]
-    change_clr = sns.color_palette('husl', 9)[-2]
     for bf_on, bf_off in zip(*example_ts[0]['before']):
-        ax.axvspan(bf_on, bf_off, color=pre_clr, alpha=0.25)        
+        ax.axvspan(bf_on, bf_off, color=PRE_CLR, alpha=0.25)        
 
     for af_on, af_off in zip(*example_ts[0]['after']):
-        ax.axvspan(af_on, af_off, color=change_clr, alpha=0.2)
+        ax.axvspan(af_on, af_off, color=CHANGE_CLR, alpha=0.2)
     
     # plot reward sequence
     lick_color = "tab:blue"

@@ -123,7 +123,7 @@ class AdaptationModel(nn.Module):
         self.r_VIP = self.r_VIP + dr_VIP
         
         # Compute input to SST
-        I_SST = self.VIP_to_SST(self.r_VIP) + self.SST_rec(self.r_SST) + 0.3 * self.I_to_SST(I_input) #self.E_to_SST(self.r_E) 
+        I_SST = self.VIP_to_SST(self.r_VIP) + self.SST_rec(self.r_SST) + self.I_to_SST(I_input) #self.E_to_SST(self.r_E) 
         # Update firing rates of SST neurons
         net_input_SST = I_SST - self.A_SST
         dr_SST = (-self.r_SST + self.activation(net_input_SST)) * (self.dt / self.tau_SST)
