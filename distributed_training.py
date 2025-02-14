@@ -40,11 +40,11 @@ def train_model(seed, gpu_id, action=False):
     args.calculate_dprime = True
     
     if not action:
-        args.perception_only = False
+        args.perception_only = True
         args.lambda_energy = 2.0
         args.lambda_temporal = 0.5
-        args.lambda_spatial = 0.0
-        args.lambda_reward = 0.1
+        args.lambda_spatial = 1.0
+        args.lambda_reward = 0.0
     else:
         args.perception_only = False
         args.lambda_energy = 2.0
@@ -57,7 +57,7 @@ def train_model(seed, gpu_id, action=False):
     change_responses, omission_responses = process_outputs(args, model, data, output, abridged=True)
     save_dir = "results/experimental" if not action else "results/experimental"
     save_dir = os.path.join(SCRATCH, "novelty_encoding_model/" + save_dir)
-    save_prefix = "no_spatial" if not action else "strong_inh"
+    save_prefix = "perception_only" if not action else "perception_action"
     torch.save({
         "args": vars(args),
         "model": model.state_dict(),
