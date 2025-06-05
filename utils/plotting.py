@@ -21,7 +21,9 @@ SST_CLR = 'forestgreen'
 EXC_CLR = 'firebrick'
 
 
-def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mode='change', labels=None, clrs=None, sem=True, normalize=True):
+def plot_trial_responses(args, ax, familiar_responses, novel_responses,
+                         trial_mode='change', labels=None, clrs=None,
+                         sem=True, normalize=True, lw=3.0):
     
     if labels is None:
         labels = ["Familiar", "Novel"]
@@ -45,6 +47,9 @@ def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mo
     # calculate std     
     familiar_std = familiar_responses.mean(-1).std(0).detach() / np.sqrt(familiar_responses.shape[0])
     novel_std = novel_responses.mean(-1).std(0).detach() / np.sqrt(novel_responses.shape[0])
+
+    # use time relative to event onset
+    half_blank -= event_onset
     
     # plot image presentations
     if trial_mode == 'change':
@@ -54,26 +59,27 @@ def plot_trial_responses(args, ax, familiar_responses, novel_responses, trial_mo
     
     elif trial_mode == 'omission':
         # first image
-        ax.axvspan(half_blank, half_blank + args.img_ts, color='magenta', alpha=0.05)
+        ax.axvspan(half_blank, half_blank + args.img_ts, color=PRE_CLR, alpha=0.25)
 
         # omitted image
-        ax.axvline(args.blank_ts + half_blank + args.img_ts, linestyle="--", color='magenta', linewidth=2.5)
-        ax.axvline(args.blank_ts + half_blank + 2 * args.img_ts, linestyle="--", color='magenta', linewidth=2.5)
+        ax.axvline(args.blank_ts + half_blank + args.img_ts, linestyle="--", color='steelblue', linewidth=2.5)
+        ax.axvline(args.blank_ts + half_blank + 2 * args.img_ts, linestyle="--", color='steelblue', linewidth=2.5)
 
         # last image
         ax.axvspan(2 * args.blank_ts + half_blank + 2 * args.img_ts,
-                   2 * args.blank_ts + half_blank + 3 * args.img_ts, color='magenta', alpha=0.05)
+                   2 * args.blank_ts + half_blank + 3 * args.img_ts, color=PRE_CLR, alpha=0.25)
     else:
         raise
         
-    ax.plot(familiar_mean.numpy(), label=labels[0], color=clrs[0], linewidth=4.0)
-    ax.plot(novel_mean.numpy(), label=labels[1], color=clrs[1], linewidth=4.0)
+    x_range = np.arange(len(familiar_mean)) - event_onset
+    ax.plot(x_range, familiar_mean.numpy(), label=labels[0], color=clrs[0], linewidth=lw)
+    ax.plot(x_range, novel_mean.numpy(), label=labels[1], color=clrs[1], linewidth=lw)
     if sem:
-        ax.fill_between(np.arange(familiar_responses.shape[1]),
+        ax.fill_between(x_range,
                         familiar_mean - familiar_std,
                         familiar_mean + familiar_std,
                         color=clrs[0], alpha=0.4)
-        ax.fill_between(np.arange(novel_responses.shape[1]),
+        ax.fill_between(x_range,
                         novel_mean - novel_std,
                         novel_mean + novel_std,
                         color=clrs[1], alpha=0.4)
@@ -118,16 +124,33 @@ def plot_omission_responses(args, ax, responses, label, image_clr, trace_clr, se
                         color=trace_clr, alpha=0.25)
         
         
-def raincloud_plot(ax, familiar_responses, novel_responses):
+def raincloud_plot(ax, familiar_responses, novel_responses, xlabels=None, marker_sz=10., color_scheme=2):
+    # color schemes: 0 -> familiar, familiar, 1 -> novel, novel, 2 -> familiar, novel
 
-    # Create a list of colors for the boxplots based on the number of features you have
-    boxplots_colors = ['darkorange', 'darkblue']
-    median_colors = ['orangered', 'navy']
+    if xlabels is None:
+        xlabels = ['Familiar', 'Novel']
+
+    # Create a list of colors for each component of the raincloud
+    if color_scheme == 0:
+        boxplots_colors = ['darkorange']*2
+        median_colors = ['orangered']*2
+        violin_colors = ['orange']*2
+        scatter_colors = ['darkorange']*2
+    elif color_scheme == 1:
+        boxplots_colors = ['darkblue']*2
+        median_colors = ['navy']*2
+        violin_colors = ['cornflowerblue']*2
+        scatter_colors = ['darkblue']*2
+    else:
+        boxplots_colors = ['darkorange', 'darkblue']
+        median_colors = ['orangered', 'navy']
+        violin_colors = ['orange', 'cornflowerblue']
+        scatter_colors = ['darkorange', 'darkblue']
 
     # Boxplot data
     data = [familiar_responses, novel_responses]
     bp = ax.boxplot(data, patch_artist = True, vert = True, showmeans=True, showfliers=False,
-                   meanprops={'markersize': 10, 'markerfacecolor': 'darkgreen'})
+                   meanprops={'markersize': marker_sz*2, 'markerfacecolor': 'teal'})
 
     # Change to the desired color and add transparency
     for patch, color in zip(bp['boxes'], boxplots_colors):
@@ -139,10 +162,7 @@ def raincloud_plot(ax, familiar_responses, novel_responses):
     
     for patch, color in zip(bp['medians'], median_colors):
         patch.set_color(color)
-        patch.set_linewidth(2.5)
-
-    # Create a list of colors for the violin plots based on the number of features you have
-    violin_colors = ['orange', 'cornflowerblue']
+        patch.set_linewidth(2.5)    
 
     # Violinplot data
     vp = ax.violinplot(data, points=500, 
@@ -155,11 +175,7 @@ def raincloud_plot(ax, familiar_responses, novel_responses):
         b.get_paths()[0].vertices[:, 0] = np.clip(b.get_paths()[0].vertices[:, 0], idx+1, idx+2)
         # Change to the desired color
         b.set_color(violin_colors[idx])
-        b.set_alpha(0.3)
-    
-
-    # Create a list of colors for the scatter plots based on the number of features you have
-    scatter_colors = ['darkorange', 'darkblue']
+        b.set_alpha(0.3)    
 
     # Scatterplot data
     for idx, features in enumerate(data):
@@ -169,10 +185,10 @@ def raincloud_plot(ax, familiar_responses, novel_responses):
         out = y.astype(float)
         out.flat[idxs] += np.random.uniform(low=-.05, high=.05, size=len(idxs))
         y = out
-        plt.scatter(y, features, s=10, c=scatter_colors[idx])
+        ax.scatter(y, features, s=marker_sz, c=scatter_colors[idx])
 
-    plt.xticks(np.arange(1,3,1), ['Familiar', 'Novel'])  # Set text labels.
-    plt.ylabel('Average response')
+    ax.set_xticks(np.arange(1,3,1), xlabels)  # Set text labels.
+    ax.set_ylabel('Average response')
 
 
 def plot_sequence_responses(
@@ -247,6 +263,13 @@ def plot_sequence_responses(
         ax = axes[i]
         ax.set_title(key)
 
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        if i < len(axes)-1:
+            ax.xaxis.set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            
+
         # Extract data for this key and sequence
         data = responses[key][seq_idx]  # shape could be [time] or [time, units]
 
@@ -254,7 +277,7 @@ def plot_sequence_responses(
         if data.ndim == 2:
             if pop_avg:
                 # average over last dimension
-                data = data.mean(dim=-1)  # for PyTorch; or data.mean(axis=-1) if NumPy
+                data = data.mean(dim=-1)  
             else:
                 # pick a random unit
                 random_unit_idx = randint(0, data.shape[-1] - 1)
@@ -302,6 +325,8 @@ def plot_sequence_responses(
         )
 
     plt.tight_layout()
+
+    return fig, axes
 
 def plot_dprimes(ax, epoch_arr, dprime_fam, dprime_nov, xlabel=None, title=None):
         
@@ -379,7 +404,7 @@ def plot_training_progress(args, training_prog, save_fig=False):
     lambda_rew_sched = ramp_schedule(args.num_epochs, args.value_start, start=args.lambda_reward/10., stop=args.lambda_reward, stop_epoch=args.num_epochs)
 
     # epsilon schedule for greedy exploration
-    epsilon_sched = decreasing_ramp_schedule(args.num_epochs, args.value_start, 0.5, 0.01, stop_epoch=args.num_epochs-10)
+    epsilon_sched = ramp_schedule(args.num_epochs, args.value_start, start=0.5, stop=0.01, stop_epoch=args.num_epochs-10) #decreasing_ramp_schedule(args.num_epochs, args.value_start, 0.5, 0.01, stop_epoch=args.num_epochs-10)
     
     # learning rate schedule for total loss
     lr_sched = args.lr * np.ones((args.num_epochs,)) # stepLR_schedule(args.lr, args.num_epochs, step_size=100, gamma=0.5)
@@ -459,7 +484,10 @@ def plot_example_reward_sequence(ax, args, title=None):
 
     return ax
 
-def plot_confidence_intervals(ax, familiar_responses, novel_responses, alpha=0.05):
+def plot_confidence_intervals(ax, familiar_responses, novel_responses, alpha=0.05, xlabels=None):
+
+    if xlabels is None:
+        xlabels = ['Familiar', 'Novel']
 
     fam_mean, fam_err = compute_population_stats(familiar_responses, alpha=alpha)
     nov_mean, nov_err = compute_population_stats(novel_responses, alpha=alpha)
@@ -474,6 +502,6 @@ def plot_confidence_intervals(ax, familiar_responses, novel_responses, alpha=0.0
     ax.errorbar([2], [nov_mean], yerr=nov_err, fmt='o', markersize=8, color=colors[1],
                  ecolor=colors[1], capsize=0, elinewidth=2)
 
-    plt.xticks(np.arange(1,3,1), ['Familiar', 'Novel'])  # Set text labels.
-    plt.ylabel('Average response')
-    plt.xlim([0.5, 2.5])
+    ax.set_xticks(np.arange(1,3,1), xlabels)  # Set text labels.
+    ax.set_ylabel('Average response')
+    ax.set_xlim([0.5, 2.5])

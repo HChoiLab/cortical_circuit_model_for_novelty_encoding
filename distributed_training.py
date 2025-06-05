@@ -6,7 +6,7 @@ from utils.analysis import process_outputs
 import numpy as np
 import argparse
 
-SCRATCH = "/storage/ice1/7/2/asharafeldin3"
+SCRATCH = "."# "/storage/ice1/7/2/asharafeldin3"
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -27,8 +27,8 @@ def train_model(seed, gpu_id, action=False):
     torch.cuda.set_device(gpu_id)
 
     # Set arguments
-    args.train_path = os.path.join(SCRATCH, "data/allen/train")
-    args.test_path = os.path.join(SCRATCH, "data/allen/test")
+    args.train_path = os.path.join(SCRATCH, "datasets/train")
+    args.test_path = os.path.join(SCRATCH, "datasets/test")
     args.seed = seed
     args.device = torch.device(f'cuda:{gpu_id}')
     args.progress_mode = 'epoch'
@@ -55,8 +55,8 @@ def train_model(seed, gpu_id, action=False):
     # train
     model, data, output, training_progress = main.main(args)
     change_responses, omission_responses = process_outputs(args, model, data, output, abridged=True)
-    save_dir = "results/experimental" if not action else "results/experimental"
-    save_dir = os.path.join(SCRATCH, "novelty_encoding_model/" + save_dir)
+    save_dir = "results/experimental" if not action else "./results/temp"
+    #save_dir = os.path.join(SCRATCH, "novelty_encoding_model/" + save_dir)
     save_prefix = "perception_only" if not action else "perception_action"
     torch.save({
         "args": vars(args),

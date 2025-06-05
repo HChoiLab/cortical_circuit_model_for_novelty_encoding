@@ -83,7 +83,7 @@ def _adaptation_main(args, Y_train, Y_train_om, Y_test, train_dataloader):
                             eta=0.00001,
                             alpha=0.001,
                             dt=0.1,
-                            hebbian=False,
+                            hebbian=True,
                             device=args.device).to(args.device)
 
     training_progress = {"loss": -1. * np.ones((args.num_epochs,))}

@@ -143,3 +143,85 @@ def load_images_to_numpy_array(path, size=None, grayscale=True, num_images=20):
                 images.append(img)
 
     return np.array(images)
+
+
+def load_results_files(directory, prefix):
+    # Ensure directory exists
+    if not os.path.isdir(directory):
+        print(f"Error: {directory} is not a valid directory.")
+        return {}
+
+    # Get list of files in directory
+    files = os.listdir(directory)
+    # Filter files by prefix and ending with '.pt'
+    torch_files = [file for file in files if file.startswith(prefix)]
+
+    args = None
+
+    change_responses = {"familiar": {}, "novel": {}, "familiar_means":{}, "novel_means": {}}
+    omission_responses = {"familiar": {}, "novel": {}, "familiar_means": {}, "novel_means": {}}
+    training_progress = {}
+    for i, file in enumerate(torch_files):
+        file_path = os.path.join(directory, file)
+        try:
+            # Load Torch file
+            data = torch.load(file_path, map_location='cpu')
+            # Concatenate tensors along the first axis
+
+            if args is None:
+                args = data['args']
+
+            # first for change responses
+            for key in data["change_responses"]["familiar"].keys():
+                fam_value = data["change_responses"]["familiar"][key]
+                nov_value = data["change_responses"]["novel"][key]
+                fam_mean = data["change_responses"]["familiar_means"][key]
+                nov_mean = data["change_responses"]["novel_means"][key]
+                if key not in change_responses["familiar"]:
+                    change_responses["familiar"][key] = fam_value
+                    change_responses["novel"][key] = nov_value
+                    change_responses["familiar_means"][key] = fam_mean
+                    change_responses["novel_means"][key] = nov_mean
+                else:
+                    change_responses["familiar"][key] = torch.cat([change_responses["familiar"][key], fam_value])
+                    change_responses["novel"][key] = torch.cat([change_responses["novel"][key], nov_value])
+                    change_responses["familiar_means"][key] = torch.cat([change_responses["familiar_means"][key], fam_mean])
+                    change_responses["novel_means"][key] = torch.cat([change_responses["novel_means"][key], nov_mean])
+            
+            # now for omission responses
+            for key in data["omission_responses"]["familiar"].keys():
+                fam_value = data["omission_responses"]["familiar"][key]
+                nov_value = data["omission_responses"]["novel"][key]
+
+                if "familiar_means" in data['omission_responses'].keys():
+                    fam_mean = data["omission_responses"]["familiar_means"][key]
+                    nov_mean = data["omission_responses"]["novel_means"][key]
+                if key not in omission_responses["familiar"]:
+                    omission_responses["familiar"][key] = fam_value
+                    omission_responses["novel"][key] = nov_value
+
+                    if "familiar_means" in data['omission_responses'].keys():
+                        omission_responses["familiar_means"][key] = fam_mean
+                        omission_responses["novel_means"][key] = nov_mean
+                else:
+                    omission_responses["familiar"][key] = torch.cat([omission_responses["familiar"][key], fam_value])
+                    omission_responses["novel"][key] = torch.cat([omission_responses["novel"][key], nov_value])
+
+                    if "familiar_means" in data['omission_responses'].keys():
+                        omission_responses["familiar_means"][key] = torch.cat([omission_responses["familiar_means"][key], fam_mean])
+                        omission_responses["novel_means"][key] = torch.cat([omission_responses["novel_means"][key], nov_mean])
+            
+            # finally training progress
+            for key in data['training_progress'].keys():
+                if key not in training_progress:
+                    training_progress[key] = [data['training_progress'][key]]
+                else:
+                    training_progress[key] += [data['training_progress'][key]]
+
+            print(f"Loaded {i + 1}/{len(torch_files)} files", end='\r')
+        except Exception as e:
+            print(f"Error loading {file}: {str(e)}")
+    
+    training_progress = {k: np.stack(v) for k, v in training_progress.items()}
+    
+    return args, change_responses, omission_responses, training_progress
