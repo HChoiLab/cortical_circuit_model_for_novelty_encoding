@@ -165,7 +165,7 @@ def load_results_files(directory, prefix):
         file_path = os.path.join(directory, file)
         try:
             # Load Torch file
-            data = torch.load(file_path, map_location='cpu')
+            data = torch.load(file_path, map_location='cpu', weights_only=False)
             # Concatenate tensors along the first axis
 
             if args is None:
