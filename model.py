@@ -84,8 +84,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         # multiply them by -1 when they're used for computation 
         nn.utils.parametrize.register_parametrization(self.vip_to_theta, 'weight', Positive())
         nn.utils.parametrize.register_parametrization(self.theta_to_z, 'weight', Positive())
-        #nn.utils.parametrize.register_parametrization(self.prior_sigma, 'bias', Positive())
-        
+         
         # this makes sure the recurrent connections between the first higher area are stable
         nn.utils.parametrize.register_parametrization(self.h_to_h, 'weight', StableRecurrent())
         
@@ -102,9 +101,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         
         # specific initialization constraints
         nn.init.normal_(self.I_to_theta.weight, mean=1., std=1e-3)
-        #nn.init.normal_(self.vip_to_theta.weight, mean=1e-1, std=1e-2)
-        nn.init.normal_(self.theta_to_z.weight, mean=0.1, std=1e-3)            # 0.1
-        #nn.init.normal_(self.prior_sigma.weight, mean=-0.8, std=1e-2)          # TODO       
+        nn.init.normal_(self.theta_to_z.weight, mean=0.1, std=1e-3)
     
     def compute_reward_loss(self, R, actions, values):
         
@@ -134,25 +131,22 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
         # compute thetas
         vip_inh = self.vip_to_theta(sigma_p)
         theta_ff_input = self.I_to_theta(I_t)
-        #theta_ff_noise = torch.randn_like(theta_ff_input) * torch.abs(theta_ff_input.mean(-1, keepdim=True))
         theta_ff = 0.3 * responses_m_1['theta_ff'] + torch.exp(-1e3 * responses_m_1['theta_ff'].abs()) * theta_ff_input
         theta_ff = torch.tanh(theta_ff)**2
-        theta_h = 0.4 * theta_ff * torch.exp(-2. * vip_inh)       # 0.3, 4.
+        theta_h = 0.4 * theta_ff * torch.exp(-2. * vip_inh)
         theta = theta_h
         
         # encode input to the posterior parameters
-        mu_q = torch.relu(torch.tanh(0.05 * self.posterior_mu(I_t)))        # 0.03
+        mu_q = torch.relu(torch.tanh(0.05 * self.posterior_mu(I_t)))
         sigma_q = torch.relu(self.posterior_sigma(I_t))
-        actual_sq = 0.05 * sigma_q #torch.tanh(0.05 * sigma_q)              # 0.03
+        actual_sq = 0.05 * sigma_q
 
         # compute pyramidal activities (inferred z's)
         raw_z = mu_q + torch.randn_like(sigma_q) * actual_sq
-        #raw_z = torch.relu(torch.tanh(0.1 * raw_z))
 
         # inhibitory input from SST to excitatory activity
-        sst_inhibition = 0.8 * responses_m_1['sst_inh'] + 2. * self.theta_to_z(theta)        # 0.8, 2.
+        sst_inhibition = 0.8 * responses_m_1['sst_inh'] + 2. * self.theta_to_z(theta)
         z = torch.relu(raw_z - sst_inhibition)
-        #z_energy = nn.functional.relu(raw_z.detach() - sst_inhibition)
 
         # evolve higher area activities
         h = torch.relu(self.z_to_h(z) + self.h_to_h(responses_m_1['h']))
@@ -173,7 +167,7 @@ class EnergyConstrainedPredictiveCodingModel(nn.Module):
             # predicted value of action
             action_value = action * lick_value + (1 - action) * nolick_value
             
-            rl_gain =  0.2 * responses_m_1['rl_gain'] + 14. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()    # 15
+            rl_gain =  0.2 * responses_m_1['rl_gain'] + 14. * torch.exp(-1e3 * responses_m_1['rl_gain']) * action_value.detach()
             rl_gain = torch.relu(rl_gain)
             
             # Update VIP activities based on RL gain modulation
